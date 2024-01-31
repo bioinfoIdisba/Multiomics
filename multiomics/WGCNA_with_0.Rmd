@@ -1,0 +1,536 @@
+---
+title: "WGCNA in Proteomic data. All with 0"
+output:
+  html_document:
+    toc: true
+    toc_float: false
+    theme: cerulean
+    highlight: kate
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1 Data input, cleaning and pre-processing
+
+Load protein abundance data, pre-process them into a format suitable for network analysis, and clean the data by removing obvious outlier samples as well as proteins and samples with excessive numbers of missing entries.
+
+## 1.a Loading expression data
+
+The expression data is contained in the files:
+
+  *   1-9_A1_A2_A3__precol2cm_col75cm_top15_70000_3e6_50_35000_5e4_100_iw4_excl40_2h_200nlmin_1ul_A1vsA2vsA3.xlsx that comes with this tutorial.
+  *   10-14_C1_C2_C3__precol2cm_col75cm_top15_70000_3e6_50_35000_5e4_100_iw4_excl40_2h_200nlmin_1ul_C1vsC2vsC3.xlsx
+
+These files contains several quality parametres. We have used grouped protein abundance to compare samples.
+
+Files not share same proteins, this is one important point to discuss. One aporximation is consider missing protein with 0 abundance. Also it can be considered only the shared proetins.
+
+```{r}
+library(readxl)
+
+# Load the WGCNA package
+library(WGCNA);
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE)
+#Read in the female liver data set
+pheno<-read_excel("./nomenclatura.xlsx")
+# Take a quick look at what is in the data set:
+dim(pheno)
+names(pheno)
+load("RESULTATS/OBJECTES/data_abundance_0")
+datExpr0 = as.data.frame(data_abundance_0)
+rownames(datExpr0) = datExpr0$Row.names
+datExpr0<-datExpr0[,-1]
+datExpr0<-t(datExpr0)
+
+```
+
+
+The expression data set contains `r dim(datExpr0)[1]`  samples.  Note that each row corresponds to a protein and column to a sample.
+
+
+## 1.b Checking data for excessive missing values and identification of outlier microarray samples
+
+We first check for proteins and samples with too many missing values:
+
+```{r}
+gsg = goodSamplesGenes(datExpr0, verbose = 3);
+gsg$allOK
+
+if (!gsg$allOK)
+{
+# Optionally, print the gene and sample names that were removed:
+if (sum(!gsg$goodGenes)>0)
+printFlush(paste("Removing genes:", paste(names(datExpr0)[!gsg$goodGenes], collapse = ", ")));
+if (sum(!gsg$goodSamples)>0)
+printFlush(paste("Removing samples:", paste(rownames(datExpr0)[!gsg$goodSamples], collapse = ", ")));
+# Remove the offending genes and samples from the data:
+datExpr0 = datExpr0[gsg$goodSamples, gsg$goodGenes]
+}
+
+```
+
+Next we cluster the samples (in contrast to clustering proteins that will come later) to see if there are any obvious outliers.
+
+```{r}
+sampleTree = hclust(dist(datExpr0), method = "average");
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small.
+# sizeGrWindow(12,9)
+#pdf(file = "Plots/sampleClustering.pdf", width = 12, height = 9);
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
+cex.axis = 1.5, cex.main = 2)
+```
+
+
+## 1.c Loading clinical trait data
+
+```{r}
+pheno<-read_excel("./nomenclatura.xlsx")
+dim(pheno)
+names(pheno)
+pheno$grup<-as.factor(c("NaCl","NaCl","NaCl","PR","PR","PR"))
+# remove columns that hold information we do not need.
+allTraits = data.frame(pheno)
+
+dim(allTraits)
+names(allTraits)
+# Form a data frame analogous to expression data that will hold the clinical traits.
+nameSamples = rownames(datExpr0);
+traitRows = match(nameSamples, allTraits$Nomenclatura.unificada);
+datTraits = allTraits[traitRows,];
+rownames(datTraits) = allTraits[traitRows, 1];
+collectGarbage()
+```
+
+We now have the expression data in the variable datExpr, and the corresponding clinical traits in the variable
+datTraits. 
+
+## Sample dendrogram
+
+Before we continue with network construction and module detection, we visualize how the clinical traits
+relate to the sample dendrogram
+
+
+```{r}
+# Re-cluster samples
+sampleTree2 = hclust(dist(datExpr0), method = "average")
+# Convert traits to a color representation: white means low, red means high, grey means missing entry
+datTraits
+
+traitColors = numbers2colors(as.numeric(datTraits$grup), signed = FALSE);
+# Plot the sample dendrogram and the colors underneath.
+plotDendroAndColors(sampleTree2, traitColors,
+groupLabels = names(datTraits),
+main = "Sample dendrogram and trait heatmap")
+```
+
+
+# 2.1 Automatic network construction and module detection
+
+## 2.a.1 Choosing the soft-thresholding power: analysis of network topology
+
+
+Constructing a weighted gene network entails the choice of the soft thresholding power β to which co-expression similarity is raised to calculate adjacency [1]. The authors of [1] have proposed to choose the soft thresholding power based on the criterion of approximate scale-free topology. We refer the reader to that work for more details; here we illustrate the use of the function pickSoftThreshold that performs the analysis of network topology and aids the user in choosing a proper soft-thresholding power. 
+
+
+
+
+```{r}
+# Choose a set of soft-thresholding powers
+powers = c(c(1:50), seq(from = 52, to=100, by=2))
+# Call the network topology analysis function
+sft = pickSoftThreshold(datExpr0, 
+                         networkType = "signed hybrid",
+                        powerVector = powers, verbose = 5)
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+
+```
+
+```{r}
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.90,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+```
+
+# Batch effect?
+
+Groups are very different (between other things, are not share proteins). 
+
+We normalize the data with combat in other report
+
+
+## 2.a.2 One-step network construction and module detection
+
+Constructing the gene network and identifying modules is now a simple function call:
+
+```{r}
+pw<-15
+net = blockwiseModules(datExpr0, power = pw,
+TOMType = "unsigned", minModuleSize = 30,
+reassignThreshold = 0, mergeCutHeight = 0.25,
+numericLabels = TRUE, pamRespectsDendro = FALSE,
+saveTOMs = TRUE,
+saveTOMFileBase = "femaleMouseTOM",
+verbose = 3)
+```
+
+
+We have chosen the  soft thresholding power `r pw` , a relatively large minimum module size of 30, and a medium sensitivity (deepSplit=2) to cluster splitting. The parameter mergeCutHeight is the threshold for merging of modules. We have also instructed the function to return numeric, rather than color, labels for modules, and to save the Topological Overlap Matrix. The output of the function may seem somewhat cryptic, but it is easy to use. For example, net$colors contains the module assignment, and net$MEs contains the module eigengenes of the modules.
+
+
+```{r}
+ table(net$colors)
+
+```
+
+The dendrogram can be displayed together with the color assignment using the following code:
+
+
+```{r}
+# open a graphics window
+sizeGrWindow(12, 9)
+# Convert labels to colors for plotting
+mergedColors = labels2colors(net$colors)
+# Plot the dendrogram and the module colors underneath
+
+```
+
+```{r}
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+"Module colors",
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05)
+```
+
+
+We note that if the user would like to change some of the tree cut, module membership, and module merging criteria, the package provides the function recutBlockwiseTrees that can apply modified criteria without having to recompute the network and the clustering dendrogram. This may save a sub-stantial amount of time.
+We now save the module assignment and module eigengene information necessary for subsequent analysis.
+
+
+
+```{r}
+moduleLabels = net$colors
+moduleColors = labels2colors(net$colors)
+MEs = net$MEs;
+geneTree = net$dendrograms[[1]];
+save(MEs, moduleLabels, moduleColors, geneTree,
+file = "FemaleLiver-02-networkConstruction-auto.RData")
+```
+
+# 3 Relating modules to external clinical trait
+
+## 3a Quantifying module–trait associations
+
+In this analysis we would like to identify modules that are significantly associated with the measured clinical traits.
+Since we already have a summary profile (eigengene) for each module, we simply correlate eigengenes with external traits and look for the most significant associations
+
+```{r}
+# Define numbers of genes and samples
+nGenes = ncol(datExpr0)
+nSamples = nrow(datExpr0)
+# Recalculate MEs with color labels
+MEs0 = moduleEigengenes(datExpr0, moduleColors)$eigengenes
+MEs = orderMEs(MEs0)
+moduleTraitCor = cor(MEs, as.numeric(datTraits$grup), use = "p")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
+```
+
+Since we have a moderately large number of modules and traits, a suitable graphical representation will help in reading the table. We color code each association by the correlation value:
+
+
+```{r}
+
+# Will display correlations and their p-values
+textMatrix = paste(signif(moduleTraitCor, 2), "\n(",
+signif(moduleTraitPvalue, 1), ")", sep = "");
+dim(textMatrix) = dim(moduleTraitCor)
+par(mar = c(6, 8.5, 3, 3));
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor,
+xLabels = names(datTraits)[4],
+yLabels = names(MEs),
+ySymbols = names(MEs),
+colorLabels = FALSE,
+colors = greenWhiteRed(50),
+textMatrix = textMatrix,
+setStdMargins = FALSE,
+cex.text = 0.5,
+zlim = c(-1,1),
+main = paste("Module-trait relationships"))
+
+```
+
+
+
+The analysis identifies the `r sum(moduleTraitPvalue<=0.05)` significant module–trait associations. We will concentrate on **GRUP** as the trait of interest.
+
+
+
+## 3.b Gene relationship to trait and important modules: Gene Significance and Module Membership
+
+
+We quantify associations of individual genes with our trait of interest by defining Gene Significance GS as (the absolute value of) the correlation between the gene and the trait. For each module, we also define a quantitative measure of module membership MM as the correlation of the module eigengene and the gene expression profile. This allows us to quantify the similarity of all proteins on the array to every module
+
+
+```{r}
+# Define variable weight containing the weight column of datTrait
+grup = as.data.frame(as.numeric(datTraits$grup));
+names(grup) = "grup"
+# names (colors) of the modules
+modNames = substring(names(MEs), 3)
+geneModuleMembership = as.data.frame(cor(datExpr0, MEs, use = "p"));
+MMPvalue = as.data.frame(corPvalueStudent(as.matrix(geneModuleMembership), nSamples));
+
+
+names(geneModuleMembership) = paste("MM", modNames, sep="")
+names(MMPvalue) = paste("p.MM", modNames, sep="")
+geneTraitSignificance = as.data.frame(cor(datExpr0, grup, use = "p"))
+GSPvalue = as.data.frame(corPvalueStudent(as.matrix(geneTraitSignificance), nSamples))
+names(geneTraitSignificance) = paste("GS.", names(grup), sep="")
+names(GSPvalue) = paste("p.GS.", names(grup), sep="")
+```
+
+##3.c Intramodular analysis: identifying genes with high GS and MM
+
+Using the GS and MM measures, we can identify genes that have a high significance for weight as well as high module membership in interesting modules. As an example, we look at the brown module that has the highest association with weight. We plot a scatterplot of Gene Significance vs. Module Membership in the significant modules
+```{r}
+moduls_int<-gsub("ME","",rownames(moduleTraitPvalue)[moduleTraitPvalue<=0.05])
+module = moduls_int[1]
+column = match(module, modNames);
+moduleGenes = moduleColors==module;
+sizeGrWindow(7, 7)
+par(mfrow = c(1,1))
+
+```
+
+```{r}
+verboseScatterplot(abs(geneModuleMembership[moduleGenes, column]),
+                   abs(geneTraitSignificance[moduleGenes, 1]),
+xlab = paste("Module Membership in", module, "module"),
+ylab = "Gene significance for body weight",
+main = paste("Module membership vs. gene significance\n"),
+cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+```
+
+
+```{r}
+module = moduls_int[2]
+column = match(module, modNames);
+moduleGenes = moduleColors==module;
+sizeGrWindow(7, 7)
+par(mfrow = c(1,1))
+
+```
+
+```{r}
+verboseScatterplot(abs(geneModuleMembership[moduleGenes, column]),
+                   abs(geneTraitSignificance[moduleGenes, 1]),
+xlab = paste("Module Membership in", module, "module"),
+ylab = "Gene significance for body weight",
+main = paste("Module membership vs. gene significance\n"),
+cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+```
+
+
+GS and MM are  correlated, illustrating that proteins highly significantly associated with a trait are often also the most important (central) elements of modules associated with the trait. The reader is encouraged to try this code with other significance trait/module correlation.
+
+## 3.d Summary output of network analysis results
+
+We have found modules with high association with our trait of interest, and have identified their central players by the Module Membership measure. We now merge this statistical information with protein annotation.
+
+```{r}
+# colnames(datExpr0)
+# colnames(datExpr0)[moduleColors=="green"]
+```
+
+```{r,warning=F,message=F}
+library(clusterProfiler) 
+
+library(dplyr)
+library(DT)
+
+```
+
+      
+```{r}
+
+gene<-colnames(datExpr0)[moduleColors==moduls_int[1]]
+gene<-unlist(strsplit(gene,"\r\n"))
+kegg_green<-
+enrichKEGG(
+gene,
+organism = "hsa",
+keyType = "uniprot",
+pvalueCutoff = 0.05,
+
+pAdjustMethod = "BH",
+qvalueCutoff = 0.2,
+use_internal_data = FALSE
+)
+
+
+
+gene<-colnames(datExpr0)[moduleColors==moduls_int[2]]
+gene<-unlist(strsplit(gene,"\r\n"))
+kegg_blue<-
+enrichKEGG(
+gene,
+organism = "hsa",
+keyType = "uniprot",
+pvalueCutoff = 0.05,
+
+pAdjustMethod = "BH",
+qvalueCutoff = 0.2,
+use_internal_data = FALSE
+)
+
+
+
+
+
+```
+```{r}
+datatable(kegg_green@result)
+datatable(kegg_blue@result)
+
+```
+
+
+# 5 Visualization of networks within R
+
+
+## 5.a Visualizing the gene network
+
+One way to visualize a weighted network is to plot its heatmap, Fig. 1. Each row and column of the heatmap
+correspond to a single gene. The heatmap can depict adjacencies or topological overlaps, with light colors denoting low adjacency (overlap) and darker colors higher adjacency (overlap). In addition, the gene dendrograms and module colors are plotted along the top and left side of the heatmap. The package provides a convenient function to create such network plots; Fig. 1 was created using the following code. This code can be executed only if the network was calculated using a single-block approach (that is, using the 1-step automatic or the step-by-step tutorials). If the networks were calculated using the block-wise approach, the user will need to modify this code to perform the visualization in each block separately. The modification is simple and we leave it as an exercise for the interested reader.
+
+
+```{r}
+# Calculate topological overlap anew: this could be done more efficiently by saving the TOM
+# calculated during module detection, but let us do it again here.
+dissTOM = 1-TOMsimilarityFromExpr(datExpr0, power = 9);
+# Transform dissTOM with a power to make moderately strong connections more visible in the heatmap
+plotTOM = dissTOM^7;
+# Set diagonal to NA for a nicer plot
+diag(plotTOM) = NA;
+# Call the plot function
+sizeGrWindow(9,9)
+
+```
+
+```{r}
+TOMplot(plotTOM, geneTree, moduleColors, main = "Network heatmap plot, all genes")
+```
+
+## 5.bVisualizing the network of eigengenes
+
+
+```{r}
+# Recalculate module eigengenes
+MEs = moduleEigengenes(datExpr0, moduleColors)$eigengenes
+# Isolate weight from the clinical traits
+grup = as.data.frame(as.numeric(datTraits$grup ))
+names(grup) = "grup"
+# Add the weight to existing module eigengenes
+
+MET = orderMEs(cbind(MEs, grup))
+# Plot the relationships among the eigengenes and the trait
+sizeGrWindow(5,7.5);
+par(cex = 0.9)
+
+```
+
+```{r}
+plotEigengeneNetworks(MET, "", marDendro = c(0,4,1,2), marHeatmap = c(3,4,1,2), cex.lab = 0.8, xLabelsAngle
+= 90)
+```
+
+
+The function produces a dendrogram of the eigengenes and trait(s), and a heatmap of their relationships. To split the dendrogram and heatmap plots, we can use the following code
+
+
+```{r}
+# Plot the dendrogram
+
+par(cex = 1.0)
+plotEigengeneNetworks(MET, "Eigengene dendrogram", marDendro = c(0,4,2,0),
+plotHeatmaps = FALSE)
+# Plot the heatmap matrix (note: this plot will overwrite the dendrogram plot)
+par(cex = 1.0)
+plotEigengeneNetworks(MET, "Eigengene adjacency heatmap", marHeatmap = c(3,4,2,2),
+plotDendrograms = FALSE, xLabelsAngle = 90)
+```
+
+# 6 Exporting to Cytoscape
+
+
+```{r}
+TOM <-1-dissTOM
+
+modules = moduls_int
+
+probes = colnames(datExpr0)
+inModule = is.finite(match(moduleColors, modules));
+
+modProbes = probes[inModule];
+# modGenes = annot$gene_symbol[match(modProbes, annot$substanceBXH)];
+# Select the corresponding Topological Overlap
+modTOM = TOM[inModule, inModule];
+dimnames(modTOM) = list(modProbes, modProbes)
+
+dimnames(modTOM) = list(modProbes, modProbes)
+# Export the network into edge and node list files Cytoscape can read
+cyt = exportNetworkToCytoscape(modTOM,
+edgeFile = paste("CytoscapeInput-edges-", paste(modules, collapse="-"), ".txt", sep=""),
+nodeFile = paste("CytoscapeInput-nodes-", paste(modules, collapse="-"), ".txt", sep=""),
+weighted = TRUE,
+threshold = 0.02,
+nodeNames = modProbes,
+# altNodeNames = modGenes,
+nodeAttr = moduleColors[inModule])
+```
+
+```{r}
+library(igraph)
+
+adj <- modTOM
+adj[adj > 0.02] = 1
+adj[adj != 1] = 0
+network <- graph.adjacency(adj)
+network <- simplify(network)  # removes self-loops
+results <- net
+
+
+V(network)$color <- moduleColors[inModule]
+V(network)$size<-6
+par(mar=c(0,0,0,0))
+# remove unconnected nodes
+network <- delete.vertices(network, degree(network)==0)
+igraph::plot.igraph(network,
+                    # mark.groups = T,
+                    layout=layout.fruchterman.reingold(network), 
+     edge.arrow.size = 0.1)
+
+
+```
+

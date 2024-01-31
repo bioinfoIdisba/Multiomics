@@ -1,0 +1,91 @@
+---
+title: ""
+author:  "Plataforma Genòmica i Bioinformàtica [Plantilla Sol·licitud](http://www.idisba.es/cat/Portals/0/Documentos/Plataformas%20Web/Genomica/Solicitud%20Servicios%20GENOMICA.pdf) "
+output:
+  #output: pdf_document
+   rmdformats::robobook:
+     css: "/usr/local/lib/R/site-library/AnalisisArrays2/templates/CSS.css"
+     #java: " /usr/local/lib/R/site-library/AnalisisArrays2/templates/Java.js"
+     highlight: kate
+     toc: 3
+     code_folding: hide
+editor_options: 
+  chunk_output_type: console
+self_contained: false
+mainfont: Harabara Mais
+sansfont: Harabara Mais
+monofont: Harabara Mais
+# knit: (function(inputFile, encoding) { 
+#       rmarkdown::render(inputFile,
+---
+
+```{r, include=FALSE}
+comp<-"INFORMES"
+dir.create(comp)
+
+version<-paste0("Versió: ",Sys.time())
+```
+
+---
+date: "`r version`"
+---
+
+
+```{r setup, include=FALSE}
+## Global options
+source("/usr/local/lib/R/site-library/AnalisisArrays2/templates/llibreries_Informes.R")
+knitr::opts_chunk$set(warning = F,message = F,class.source = "watch-out")
+dir.create(paste0(comp,"/RESULTATS"))
+dir.create(paste0(comp,"/RESULTATS/PLOTS"))
+dir.create(paste0(comp,"/RESULTATS/TAULES"))
+dir.create(paste0(comp,"/RESULTATS/OBJECTES_R"))
+
+```
+
+
+
+#  Llibreries
+
+```{r}
+library(compareGroups)
+```
+
+
+#  Carregar els objectes d'R data_raw_teixit i data_rma_teixit
+
+```{r}
+data(regicor)
+
+datatable_mod4(regicor)
+
+```
+
+
+#  Boxplots
+
+```{r}
+
+```
+
+# Fenotip
+```{r}
+
+```
+
+#   Expressió diferencial 
+
+```{r}
+
+```
+
+# Significància biològica
+
+```{r}
+
+```
+
+````{=html}
+```{r, echo=FALSE, results='asis'}
+xfun::file_string('/usr/local/lib/R/site-library/AnalisisArrays2/templates/credits.html')
+```
+````
