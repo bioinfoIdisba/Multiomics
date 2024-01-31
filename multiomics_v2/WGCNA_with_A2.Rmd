@@ -1,0 +1,212 @@
+---
+title: "WGCNA in Proteomic data. Shared proteins norm"
+output:
+  html_document:
+    toc: true
+    toc_float: false
+    theme: cerulean
+    highlight: kate
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1 Data input, cleaning and pre-processing
+
+Load protein abundance data, pre-process them into a format suitable for network analysis, and clean the data by removing obvious outlier samples as well as proteins and samples with excessive numbers of missing entries.
+
+## 1.a Loading expression data
+
+The expression data is contained in the file:
+
+  *   1-9_A1_A2_A3__precol2cm_col75cm_top15_70000_3e6_50_35000_5e4_100_iw4_excl40_2h_200nlmin_1ul_A1vsA2vsA3.xlsx that comes with this tutorial.
+  *   10-14_C1_C2_C3__precol2cm_col75cm_top15_70000_3e6_50_35000_5e4_100_iw4_excl40_2h_200nlmin_1ul_C1vsC2vsC3.xlsx
+  *   1-14_A1_A2_A3_C1_C2_C3_precol2cm_col75cm_top15_70000_3e6_50_35000_5e4_100_iw4_excl40_2h_200nlmin_1ul_AvsC_abundances_indiv: Contains protein abundance in both  groups.
+  
+
+Files grouped by samples, not share same proteins. This is one important point to discuss. One aporximation is consider missing protein with 0 abundance. Also it can be considered only the shared proetins.
+
+```{r}
+library(readxl)
+
+# Load the WGCNA package
+library(WGCNA);W
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE)
+#Read in the female liver data set
+pheno<-read_excel("./nomenclatura.xlsx")
+# Take a quick look at what is in the data set:
+dim(pheno)
+names(pheno)
+# load("RESULTATS/OBJECTES/data_abundance")
+data_abundance_raw<-read_xlsx("./Gener/1-14_A1_A2_A3_C1_C2_C3_precol2cm_col75cm_top15_70000_3e6_50_35000_5e4_100_iw4_excl40_2h_200nlmin_1ul_AvsC_abundances_indiv(1).xlsx")  
+dim(data_abundance_raw)
+data_abundance_raw_1<-(data_abundance_raw)[grep("Abundances [(]Normalized)",colnames(data_abundance_raw))]
+dim(data_abundance_raw_1)
+# data_abundance_raw_1 Aquesta matriu la fare servir per el WGCNA
+data_abundance_raw_1<-data.frame(data_abundance_raw_1)
+rownames(data_abundance_raw_1)<-data_abundance_raw$Accession
+
+# Arreglar els noms de les mostres
+
+colnames(data_abundance_raw_1)<-gsub("Abundances..Normalized...","",colnames(data_abundance_raw_1))
+colnames(data_abundance_raw_1)<-gsub("..precipitation..EVs..n.a..1..1..","",colnames(data_abundance_raw_1))
+colnames(data_abundance_raw_1)<-gsub("..precipitation..EVs..n.a..1..2..","",colnames(data_abundance_raw_1))
+colnames(data_abundance_raw_1)<-gsub("..precipitation..EVs..n.a..2..1..","",colnames(data_abundance_raw_1))
+colnames(data_abundance_raw_1)<-gsub("..precipitation..EVs..n.a..2..2..","",colnames(data_abundance_raw_1))
+colnames(data_abundance_raw_1)<-gsub("..precipitation..EVs..n.a..3..1..","",colnames(data_abundance_raw_1))
+colnames(data_abundance_raw_1)<-gsub("..precipitation..EVs..n.a..3..2..","",colnames(data_abundance_raw_1))
+colnames(data_abundance_raw_1)<-gsub(".Sample..","",colnames(data_abundance_raw_1))
+colnames(data_abundance_raw_1)<-gsub("[.]","_",colnames(data_abundance_raw_1))
+pheno<-data.frame(name=colnames(data_abundance_raw_1))
+pheno$Sample<-NA
+pheno$Group<-NA
+pheno<-read.csv("20240118-data(1).csv")
+pheno$Sample_ID<-unlist(lapply(pheno$name, function(x) strsplit(x,"_")[[1]][1]))
+
+# Hi ha NA. Substituir per 0.01
+table(is.na(data_abundance_raw_1))
+data_abundance_raw_1[is.na(data_abundance_raw_1)]<-0.01
+
+datExpr0 = as.data.frame(data_abundance_raw_1)
+
+
+rownames(datExpr0) = rownames(datExpr0)
+
+# datExpr0<-datExpr0[,-1]
+datExpr0<-t(datExpr0)
+
+```
+
+
+The expression data set contains `r dim(datExpr0)[1]`  samples.  Note that each row corresponds to a protein and column to a sample.
+
+
+## 1.b Checking data for excessive missing values and identification of outlier microarray samples
+
+We first check for proteins and samples with too many missing values:
+
+```{r}
+gsg = goodSamplesGenes(datExpr0, verbose = 3);
+gsg$allOK
+
+if (!gsg$allOK)
+{
+# Optionally, print the gene and sample names that were removed:
+if (sum(!gsg$goodGenes)>0)
+printFlush(paste("Removing genes:", paste(colnames(datExpr0)[!gsg$goodGenes], collapse = ", ")));
+if (sum(!gsg$goodSamples)>0)
+printFlush(paste("Removing samples:", paste(rownames(datExpr0)[!gsg$goodSamples], collapse = ", ")));
+# Remove the offending genes and samples from the data:
+datExpr0 = datExpr0[gsg$goodSamples, gsg$goodGenes]
+}
+
+```
+
+Next we cluster the samples (in contrast to clustering proteins that will come later) to see if there are any obvious outliers.
+
+```{r}
+
+
+dim(datExpr0)
+sampleTree = hclust(dist(datExpr0), method = "average");
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+names(sampleTree)
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
+cex.axis = 1.5, cex.main = 2)
+
+```
+
+La mostra A2 (F65 i F66 ) semblen outliers.Les elimino
+
+## 1.c Loading clinical trait data
+
+```{r}
+# Create datTraits
+allTraits = data.frame(pheno)
+pheno
+nameSamples = rownames(datExpr0);
+datTraits<-data.frame(name=nameSamples)
+# PL-EV1 -> llista de plaquetes ->NaCL
+
+datTraits$nom_uni<-datTraits$name
+
+# datTraits$nom_uni[grep("Lisat.Plaquetes",datTraits$name)]<-"NaCl"
+
+traitRows = match(nameSamples, allTraits$name);
+datTraits = allTraits[traitRows,];
+rownames(datTraits) = allTraits[traitRows, 1];
+collectGarbage()
+```
+
+We now have the expression data in the variable datExpr, and the corresponding clinical traits in the variable datTraits. 
+
+## Sample dendrogram
+
+Before we continue with network construction and module detection, we visualize how the clinical traits
+relate to the sample dendrogram
+
+
+```{r}
+# Re-cluster samples
+sampleTree2 = hclust(dist(datExpr0), method = "average")
+# Convert traits to a color representation: white means low, red means high, grey means missing entry
+datTraits
+datTraits$Group_num<-datTraits$Group
+datTraits$Group_num<-gsub("NaCl",1,datTraits$Group_num)
+datTraits$Group_num<-gsub("PRP",0,datTraits$Group_num)
+traitColors = numbers2colors(as.numeric(datTraits$Group_num), signed = FALSE);
+# Plot the sample dendrogram and the colors underneath.
+plotDendroAndColors(sampleTree2, traitColors,
+groupLabels = names(datTraits),
+main = "Sample dendrogram and trait heatmap")
+```
+
+
+
+# Batch effect?
+
+Groups are very different (between other things, are not share proteins). 
+
+
+```{r}
+library(sva)
+row.names(datExpr0)
+datExpr0<-
+ComBat(
+  t(datExpr0),batch = c(rep("ap",18),rep("PL",length(19:28))),
+  mod = NULL,
+  par.prior = TRUE,
+  prior.plots = FALSE,
+  mean.only = FALSE,
+  ref.batch = NULL,
+  BPPARAM = bpparam("SerialParam")
+)
+datExpr0<-t(datExpr0)
+```
+
+
+## Sample dendrogram
+
+Before we continue with network construction and module detection, we visualize how the clinical traits
+relate to the sample dendrogram
+
+
+```{r}
+# Re-cluster samples
+sampleTree2 = hclust(dist(datExpr0), method = "average")
+# Convert traits to a color representation: white means low, red means high, grey means missing entry
+datTraits
+datTraits$Group_num<-datTraits$Group
+datTraits$Group_num<-gsub("NaCl",1,datTraits$Group_num)
+datTraits$Group_num<-gsub("PRP",0,datTraits$Group_num)
+traitColors = numbers2colors(as.numeric(datTraits$Group_num), signed = FALSE);
+# Plot the sample dendrogram and the colors underneath.
+plotDendroAndColors(sampleTree2, traitColors,
+groupLabels = names(datTraits),
+main = "Sample dendrogram and trait heatmap")
+```

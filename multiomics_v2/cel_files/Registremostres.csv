@@ -1,0 +1,16 @@
+Id de la muestra;Nombre Cel file;Variable 1 (Fuente de la muestra);Variable 2 ( Envejecimiento de la muestra);individuo;temps;NaCl_envellides;embrio_PBS;PBS_NaCl
+A1H;A1H_(miRNA-4_0).CEL;Evs Lisat plaquetes (NaCL);;;;si;no;si
+A2H;A2H_(miRNA-4_0).CEL;Evs Lisat plaquetes (NaCl);;;;si;no;si
+A3H;A3H_(miRNA-4_0).CEL;Evs Lisat plaquetes(NaCl);;;;si;no;si
+C1H;C1H_(miRNA-4_0).CEL;Evs Plaquetes envellides;;;;si;no;no
+C2H;C2H_(miRNA-4_0).CEL;Evs Plaquetes envellide;;;;si;no;no
+C3H;C3H_(miRNA-4_0).CEL;Evs Plaquetes envellide;;;;si;no;no
+F10;F10_(miRNA-4_0).CEL;EVs cel·lules embrionàries donant F;10;F;1;no;si;no
+F11;F11_(miRNA-4_0).CEL;EVs cel·lules embrionàries donant F;11;F;2;no;si;no
+K11;K11_(miRNA-4_0).CEL;EVs cel·lules embrionàries donant K;11;K;1;no;si;no
+K13;K13_(miRNA-4_0).CEL;EVs cel·lules embrionàries donant K;13;K;2;no;si;no
+L7;L7_(miRNA-4_0).CEL;EVs cel·lules embrionàries donant L;7;L;1;no;si;no
+L13;L13_(miRNA-4_0).CEL;EVs cel·lules embrionàries donant L;13;L;2;no;si;no
+P1;P1_(miRNA-4_0).CEL;EVs Lisat de plaquetes (PBS);;;;no;si;si
+P2;P2_(miRNA-4_0).CEL;EVs Lisat de plaquetes (PBS);;;;no;si;si
+P3;P3_(miRNA-4_0).CEL;EVs Lisat de plaquetes (PBS);;;;no;si;si

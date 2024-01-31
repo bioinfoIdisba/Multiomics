@@ -1,0 +1,449 @@
+---
+title: "Proteomic data + miRNA"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    theme: cerulean
+    highlight: kate
+    code_folding: show
+  always_allow_html: true  
+  pdf_document:
+    toc: yes
+editor_options:
+  chunk_output_type: console
+---
+
+# miRNA selected
+
+  *   miRNA 210-3p
+  *   miRNA 320a
+  *   miRNA 320b
+  *   miRNA 4745-5p
+
+```{r,echo=F}
+knitr::opts_chunk$set(warning = F,message = F,class.source = "watch-out",eval=T)
+```
+
+```{r,echo=F}
+source("/usr/local/lib/R/site-library/AnalisisArrays2/templates/llibreries_Informes.R")
+
+```
+
+```{r}
+
+celfiles<-list.celfiles("./cel_files/",full.names=TRUE)
+data<-read.celfiles(celfiles)
+
+# Anotació fenotipica
+pheno <- read.csv(file="./cel_files/Registremostres.csv",sep=";")
+
+pheno<-pheno %>%
+  mutate(NaCl_envellides=ifelse(NaCl_envellides =="si"&PBS_NaCl=="si",1,
+                                ifelse(NaCl_envellides =="si"&PBS_NaCl=="no",2,"no")))
+
+
+```
+
+```{r}
+
+datatable_jm<-function(x,column=NULL){
+  
+  # if(is.na(column)){column<-0}
+
+datatable(
+  x,
+  extensions = 'Buttons', 
+  filter = list(
+    position = 'top', clear = T
+  ),
+  options = list(dom = 'Blfrtip',buttons = list(list(extend = 'colvis')),
+                 buttons = list('copy', 'print',
+                                list(extend = 'collection',
+                                     buttons = c('csv', 'excel', 'pdf'),
+                                     text = 'Download')),
+                 columnDefs = list(list(visible=FALSE, targets=column))))}
+
+
+```
+
+```{r}
+pheno$nom<-gsub("_[(]miRNA-4_0).CEL","",pheno$Nombre.Cel.file)
+rownames(pheno)<-pheno$Nombre.Cel.file
+# phenoData(data) <- AnnotatedDataFrame(pheno)
+pheno_ano<-AnnotatedDataFrame(pheno)
+
+data<-read.celfiles(celfiles, phenoData = pheno_ano)
+
+# RMA
+data_rma<-rma(data)
+library(dplyr)
+
+df <- read.csv("/home/SHARED/annotation_affymetrix/miRNA-4_0-st-v1.annotations.20160922.csv",comment.char = "#")
+
+df<-
+df %>% 
+  group_by(Accession) %>% 
+  mutate(gene=paste(Accession, collapse="|"))
+
+feat<-df[match(rownames(data_rma@featureData@data),df$Probe.Set.Name),]
+feat<-AnnotatedDataFrame(feat)
+rownames(feat@data)<-
+rownames(data_rma@featureData)
+
+data_rma@featureData<-feat
+
+dup.ids <- feat@data$Accession[duplicated(feat@data$Accession)] %>% 
+  unique %>%
+  sort
+
+data_rma<-
+data_rma[,pData(data_rma)$temps!=2|is.na(pData(data_rma)$temps)]
+data_rma<-
+data_rma[data_rma@featureData@data$Species.Scientific.Name=="Homo sapiens",]
+data_rma<-data_rma[data_rma@featureData@data$Sequence.Type=="miRNA",]
+exp_rma <- exprs(data_rma)
+
+
+
+```
+
+
+# DEG
+
+```{r}
+# Filtre
+comparativa<-"NaCl_envellides"
+
+data_rma<-data_rma[,data_rma@phenoData@data[,comparativa]!="no"]
+# mostres: 
+# mostres<-c("C2H","C1H","C3H","A1H","A2H","A3H")
+# data_rma_f<-data_rma[,data_rma@phenoData@data$nom%in%mostres]
+
+g1<-levels(as.factor(data_rma@phenoData@data[,comparativa]))[1]
+g2<-levels(as.factor(data_rma@phenoData@data[,comparativa]))[2]
+
+data_rma@phenoData@data[,comparativa]<-gsub(g1,"NaCl",data_rma@phenoData@data[,comparativa])
+data_rma@phenoData@data[,comparativa]<-gsub(g2,"envellides",data_rma@phenoData@data[,comparativa])
+g1<-"NaCl"
+g2<-"envellides"
+data_rma<-
+data_rma[data_rma@featureData@data$Species.Scientific.Name=="Homo sapiens",]
+data_rma<-data_rma[data_rma@featureData@data$Sequence.Type=="miRNA",]
+data_rma_ind<-data_rma
+exp_rma <- exprs(data_rma_ind)
+
+phenotype_names <- ifelse(str_detect(pData(data_rma)[,comparativa],g1), g1, g2)
+
+annotation_for_heatmap <- data.frame(Phenotype = phenotype_names)
+
+row.names(annotation_for_heatmap) <- pData(data_rma_ind)$Id_de_la_muestra
+
+dists <- as.matrix(dist(t(exp_rma), method = "manhattan"))
+rownames(dists) <- pData(data_rma_ind)$Id_de_la_muestra
+hmcol <- rev(colorRampPalette(RColorBrewer::brewer.pal(9, "YlOrRd"))(255))
+colnames(dists) <- NULL
+diag(dists) <- NA
+
+ann_colors <- list(
+  Phenotype = c(g1 = "chartreuse4", g2 = "burlywood3")
+  
+                   )
+
+names(ann_colors$Phenotype)<-c(g1,g2)
+# png(paste0("resultats/","/PLOTS/heatmap.png"),width = 800,height = 800,res=150)
+# pheatmap(dists, col = (hmcol), 
+#          
+#          annotation_col = annotation_for_heatmap,
+#          annotation_colors = ann_colors,
+#          legend = TRUE, 
+#          treeheight_row = 10,
+#          legend_breaks = c(min(dists, na.rm = TRUE), 
+#                          max(dists, na.rm = TRUE)), 
+#          legend_labels = (c("small distance", "large distance")),
+#          main = "Heatmap calibrated samples")
+.tmp<-dev.off()
+# knitr::include_graphics("resultats/PLOTS/heatmap.png")
+```
+
+# Taula
+  
+```{r}
+groups = phenotype_names
+f = factor(groups)
+design = model.matrix(~ 0 + f)
+colnames(design) = c(g1,g2)
+data.fit = lmFit(exprs(data_rma_ind),design)
+
+lev <- c(g1, g2)
+
+
+
+# Parsing
+a<-c(g1,"-",g2)
+astr=paste(a, collapse="")
+prestr="makeContrasts("
+poststr=",levels=design)"
+commandstr=paste(prestr,astr,poststr,sep="")
+
+
+
+
+
+contrast.matrix=eval(parse(text=commandstr))
+# colnames(contrast.matrix)<-paste(g1,"-",g2)
+data.fit.con = contrasts.fit(data.fit,contrast.matrix)
+data.fit.eb = eBayes(data.fit.con)
+
+tab = topTable(data.fit.eb,coef=1,
+               # lfc = log2(1.5),
+               number=Inf,adjust.method="BH",genelist = data_rma_ind@featureData@data )   
+tab_all = topTable(data.fit.eb,coef=1,number=Inf,adjust.method="BH",genelist = data_rma_ind@featureData@data )   
+
+cols<-c("logFC","AveExpr")
+cols1<-c("P.Value", "adj.P.Val")
+
+
+
+FC_tab<-
+tab %>% filter(P.Value<=0.05,abs(logFC)>=log2(1.5)) %>% 
+   dplyr::select(-c(GeneChip.Array,Annotation.Date,Sequence,Sequence.Source,Probe.Set.ID,B,t,Probe.Set.Name,Alignments,Clustered.miRNAs.within.10kb,Genome.Context,Target.Genes)) %>% 
+  mutate(across(cols, round, 3)) %>% 
+  mutate(across(all_of(cols1), format.pval))
+
+
+
+datatable_jm(FC_tab)
+```
+
+# Volcano
+```{r}
+tab_all$diffexpressed <- "NO"
+# if log2Foldchange > 0.6 and pvalue < 0.05, set as "UP" 
+tab_all$diffexpressed[tab_all$logFC > log2(1.5) & tab_all$P.Value < 0.05] <- "UP"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+tab_all$diffexpressed[tab_all$logFC < -log2(1.5) & tab_all$P.Value < 0.05] <- "DOWN"
+
+
+tab_all$delabel <- NA
+tab_all$delabel[tab_all$diffexpressed != "NO"] <- tab_all$Transcript.ID.Array.Design.[tab_all$diffexpressed != "NO"]
+
+# plot adding up all layers we have seen so far
+ggplot(data=tab_all, aes(x=logFC, y=-log10(P.Value), col=diffexpressed,
+                      label=delabel))+
+        geom_point() + 
+        theme_minimal() +
+         geom_text_repel() +
+        scale_color_manual(values=c("blue", "black", "red")) +
+        geom_vline(xintercept=c(-0.6, 0.6), col="red") +
+        geom_hline(yintercept=-log10(0.05), col="red")
+```
+
+# Heatmap
+```{r}
+gens_SIG<-tab %>% filter(P.Value<=0.05,abs(logFC)>=log2(1.5)) %>% 
+  .$Probe.Set.Name
+
+
+data_rma_SIG<-data_rma[data_rma@featureData@data$Probe.Set.Name%in%gens_SIG,]
+data_rma_SIG_df<-exprs(data_rma_SIG)
+rownames(data_rma_SIG_df)<-data_rma_SIG@featureData@data$Transcript.ID.Array.Design.
+hmcol <- rev(colorRampPalette(RColorBrewer::brewer.pal(5, "YlOrRd"))(255))
+colnames(dists) <- NULL
+diag(dists) <- NA
+
+ann_colors <- list(
+  Phenotype = c(g1 = "chartreuse4", g2 = "burlywood3")
+  
+                   )
+names(ann_colors$Phenotype)<-c(g1,g2)
+colnames(data_rma_SIG_df)<-gsub("_[(]miRNA-4_0).CEL","",colnames(data_rma_SIG_df))
+
+p1<-pheatmap(
+  data_rma_SIG_df,cutree_rows = 2,cutree_cols = 2,
+         annotation_col = annotation_for_heatmap,
+         annotation_colors = ann_colors,scale = "row",
+         legend = F, 
+         treeheight_row = 50,
+         legend_breaks = c(min(dists, na.rm = TRUE), 
+                         max(dists, na.rm = TRUE)), 
+         legend_labels = (c("small distance", "large distance")),
+         main = "miRNA FC>1.5 & p<=0.05")
+
+p1
+```
+
+# Find Taregets 
+
+```{r}
+
+library(multiMiR)
+mirna_int<-c("hsa-miR-4745-5p","hsa-miR-210-3p","hsa-miR-320a","hsa-miR-320b","hsa-miR-320c")
+
+targets <- get_multimir(mirna = mirna_int, summary = T)
+table(targets@data$mature_mirna_id)
+```
+
+# Mapping
+
+As a first step, we map the gene names to the STRING database identifiers using the map method.
+
+The map function adds an additional column with STRING identifiers to the dataframe that is passed as first parameter.
+
+
+## miRNA 1
+```{r}
+library(STRINGdb)
+
+ # string_db <- STRINGdb$new(version = "11.5", species = 9606, score_threshold = 200, input_directory="")
+ # example1_mapped <- string_db$map(targets@summary, "target_symbol", removeUnmappedRows = TRUE )
+
+# save(string_db,file = "string_db")
+# save(example1_mapped,file = "example1_mapped")
+load("string_db")
+load("example1_mapped")
+example2<-
+example1_mapped %>% 
+  filter(mature_mirna_id==unique(example1_mapped$mature_mirna_id)[1])
+
+hits_2 <- example2$STRING_id
+hits_2_entrez <- example2$target_entrez
+# head(subset(example1_mapped, log10(pvalue) >= -log10(0.01) | abs(logFC) >= 0.5))
+
+
+```
+
+## Network proteins 
+
+```{r}
+string_db$plot_network(hits_2,add_summary = T)
+
+```
+
+
+## Cluster
+
+Returns a list of clusters of interacting proteins.
+
+
+```{r}
+ clustersList_2 <- string_db$get_clusters(example2$STRING_id)
+ save(clustersList_2,file="clustersList_2")
+load("clustersList_2")
+
+for( i in 1:length(clustersList_2)){
+if  (length(clustersList_2[[i]])>1){
+  print(string_db$plot_network(clustersList_2[[i]]))
+}}
+
+print(string_db$plot_network(clustersList_2[[3]]))
+```
+
+
+# Perform GO and KEGG pathways enrichment analyses
+
+```{r}
+hits_universe_clean<-gsub("9606.","",string_db$proteins$protein_external_id)
+STRING_id_clean<-gsub("9606.","",example1_mapped$STRING_id)
+
+
+
+enrichmentGO_2 <- string_db$get_enrichment( hits_2, category = "Process" )
+library(rrvgo)
+simMatrix_2 <- calculateSimMatrix(enrichmentGO_2$term,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+
+scores_2 <- setNames(-log10(enrichmentGO_2$fdr), enrichmentGO_2$term)
+
+
+reducedTerms_2 <- reduceSimMatrix(simMatrix_2,
+                                scores_2,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+treemapPlot(reducedTerms,title = unique(example1_mapped$mature_mirna_id)[1])
+
+# datatable_jm(enrichmentGO_2,column =c("inputGenes","preferredNames"))
+# enrichmentKEGG_2 <- string_db$get_enrichment( hits_2, category = "KEGG" )
+# datatable_jm(enrichmentKEGG_2)
+```
+
+
+## miRNA 2
+```{r}
+library(STRINGdb)
+
+ # string_db <- STRINGdb$new(version = "11.5", species = 9606, score_threshold = 200, input_directory="")
+ # example1_mapped <- string_db$map(targets@summary, "target_symbol", removeUnmappedRows = TRUE )
+
+# save(string_db,file = "string_db")
+# save(example1_mapped,file = "example1_mapped")
+example2<-
+example1_mapped %>% 
+  filter(mature_mirna_id==unique(example1_mapped$mature_mirna_id)[2])
+
+hits_2 <- example2$STRING_id
+hits_2_entrez <- example2$target_entrez
+# head(subset(example1_mapped, log10(pvalue) >= -log10(0.01) | abs(logFC) >= 0.5))
+
+
+```
+
+## Network proteins 
+
+```{r}
+string_db$plot_network(hits_2,add_summary = T)
+
+```
+
+
+## Cluster
+
+Returns a list of clusters of interacting proteins.
+
+
+```{r}
+clustersList_2 <- string_db$get_clusters(example2$STRING_id)
+save(clustersList_2,file="clustersList_2")
+load("clustersList_2")
+
+for( i in 1:length(clustersList_2)){
+if  (length(clustersList_2[[i]])>1){
+  print(string_db$plot_network(clustersList_2[[i]]))
+}}
+
+print(string_db$plot_network(clustersList_2[[3]]))
+```
+
+
+# Perform GO and KEGG pathways enrichment analyses
+
+```{r}
+hits_universe_clean<-gsub("9606.","",string_db$proteins$protein_external_id)
+STRING_id_clean<-gsub("9606.","",example1_mapped$STRING_id)
+
+
+
+enrichmentGO_2 <- string_db$get_enrichment( hits_2, category = "Process" )
+library(rrvgo)
+simMatrix_2 <- calculateSimMatrix(enrichmentGO_2$term,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+
+scores_2 <- setNames(-log10(enrichmentGO_2$fdr), enrichmentGO_2$term)
+
+
+reducedTerms_2 <- reduceSimMatrix(simMatrix_2,
+                                scores_2,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+treemapPlot(reducedTerms,title = unique(example1_mapped$mature_mirna_id)[1])
+
+# datatable_jm(enrichmentGO_2,column =c("inputGenes","preferredNames"))
+# enrichmentKEGG_2 <- string_db$get_enrichment( hits_2, category = "KEGG" )
+# datatable_jm(enrichmentKEGG_2)
+```
+
+

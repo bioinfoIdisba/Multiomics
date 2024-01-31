@@ -1,0 +1,668 @@
+---
+title: "Diferential expressed proteins"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    theme: flatly
+    highlight: kate
+    code_folding: hide
+  pdf_document:
+    toc: yes
+editor_options:
+    chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = F,message = F,fig.height=10, fig.width=10,results = "asis")
+library(org.Hs.eg.db)
+```
+
+
+
+```{r}
+library(DT)
+library(dplyr)
+library(limma)
+
+```
+
+# Table with Shared proteins
+
+```{r}
+load(file = "./matriu_unificada")
+# dim(datExpr0)
+matriu<-t(datExpr0)
+matriu<-log2(matriu)
+```
+
+```{r}
+load(file = "protein_anotation")
+protein_anotation<-data.frame(protein_anotation)
+rownames(protein_anotation)<-protein_anotation$Accession
+groups<-colnames(matriu)
+groups<-gsub("[1-9]","",groups)
+groups<-gsub("A","PL",groups)
+groups<-gsub("C$","aP",groups)
+f = factor(groups,levels=c("PL","aP"))
+
+design = model.matrix(~ 0 + f)
+colnames(design) = gsub("^f","",colnames(design))
+data.fit = lmFit(matriu,design)
+contrast.matrix = makeContrasts(PL-aP,levels=design)
+data.fit.con = contrasts.fit(data.fit,contrast.matrix)
+data.fit.eb = eBayes(data.fit.con)
+
+protein_anotation<-protein_anotation[match(rownames(data.fit.eb$coefficients),protein_anotation$Accession),]
+tab = topTable(data.fit.eb,coef=1,number=Inf,adjust.method="BH",genelist = protein_anotation)
+save(tab,file="RNA_tab")
+```
+
+```{r}
+datatable_jm<-function(x,column=NULL,nom=NULL){
+datatable(
+x,caption=nom,
+extensions = 'Buttons',
+filter = list(position = 'top', clear = T),
+options = list(dom = 'Blfrtip',
+scrollX = TRUE,
+scrollY = T,
+scrollCollapse = TRUE,
+# buttons = list(list(extend = 'colvis')),
+buttons = list(list(extend = 'colvis'),'copy', 'print',
+list(extend = 'collection',
+buttons = c('csv', 'excel', 'pdf'),
+text = 'Download')),
+columnDefs = list(list(visible=FALSE, targets=column))))
+}
+
+comparativa<-colnames(contrast.matrix)
+comparativa<-gsub("-","vs",comparativa)
+tab_sig<-tab %>% filter(adj.P.Val<=0.05)
+datatable_jm(tab_sig ,nom=comparativa)
+save(tab_sig,file="RNA_tab_sig")
+
+  
+```
+
+
+
+## Volcano
+```{r,fig.height=10, fig.width=10}
+library(EnhancedVolcano)
+p_volcano<-  
+EnhancedVolcano(tab,
+                  subtitle = comparativa,
+    lab = tab$symbol,
+    x = 'logFC',
+    y = 'adj.P.Val',
+    title = 'Volcano',
+    pCutoff = 0.05,
+    FCcutoff = 0.5,
+    pointSize = 3.0,
+    labSize = 6.0,ylim = c(0,3.5),
+    drawConnectors = F,
+    widthConnectors = 0.1,
+    )
+p_volcano
+png("volcano.png",width = 900,height = 700)
+p_volcano
+dev.off()
+```
+
+
+## Heatmap
+
+```{r,fig.height=10, fig.width=10}
+library(ComplexHeatmap)
+mat<-matriu[rownames(tab_sig)[1:50],]
+rownames(mat)<-tab_sig$symbol[match(rownames(mat),tab_sig$Accession)]
+ top_annotation = HeatmapAnnotation(Group = anno_block(gp = gpar(fill = c("#BD7575", "#7EA669")),
+                                                       labels = c("PL", "aP"), 
+        labels_gp = gpar(col = "white", fontsize = 10)),
+                                    Samples = anno_boxplot(mat))
+Heatmap(mat,name="Expression", 
+        column_title = paste0("Top ",dim(mat)[1]," proteins DEG"),
+        rect_gp = gpar(col = "white", lwd = 0.5),
+        column_km = 2,
+        # row_split = factor(rep(c("A"),15)),
+         row_km = 2,
+        border = TRUE,
+        right_annotation = rowAnnotation(Proteins = anno_boxplot(mat)),
+        top_annotation = top_annotation
+        )
+
+
+
+mat<-matriu[rownames(tab_sig)[1:50],]
+rownames(mat)<-tab_sig$symbol[match(rownames(mat),tab_sig$Accession)]
+ top_annotation = HeatmapAnnotation(Group = anno_block(gp = gpar(fill = c("#BD7575", "#7EA669")),
+                                                       labels = c("PL", "aP"), 
+        labels_gp = gpar(col = "white", fontsize = 10))
+        # Samples = anno_boxplot(mat)
+        )
+ p_heatmap<-
+Heatmap(mat,name="Expression", 
+        column_title = paste0("Top ",dim(mat)[1]," proteins DEG"),
+        rect_gp = gpar(col = "white", lwd = 0.5),
+        column_km = 2,
+        # row_split = factor(rep(c("A"),15)),
+         row_km = 2,
+        border = TRUE,
+        # right_annotation = rowAnnotation(Proteins = anno_boxplot(mat)),
+        top_annotation = top_annotation
+        )
+
+
+ png("heatmap.png",width = 900,height = 700)
+ 
+ p_heatmap
+ 
+ dev.off()
+```
+
+# GO
+
+## ORA
+```{r}
+
+library(clusterProfiler)
+
+```
+
+
+
+```{r,eval=F}
+## Filter for Specific level
+# ggo <- groupGO(gene     = rownames(tab_sig),
+#                OrgDb    = org.Hs.eg.db,
+#                ont      = "BP",
+#                level    = 1,
+#                keyType = "UNIPROT",
+#
+#                readable = TRUE)
+# universe<-ggo@result[ggo@result$Count>0,]$geneID
+# universe<-strsplit(universe,"/")
+# universe<-unlist(universe)
+# universe<-unique(universe)
+
+```
+
+
+```{r,eval=F}
+### GO with specific level (PROVISIONAL)
+# GO_ORA_level<-enrichGO(
+#   rownames(tab_sig),
+#   OrgDb=org.Hs.eg.db,
+#   keyType = "UNIPROT",
+#   ont = "BP",
+#   pvalueCutoff = 0.05,
+#   pAdjustMethod = "BH",
+#   universe=universe,
+  # qvalueCutoff = 0.2,
+   # minGSSize = 1,
+   # maxGSSize = 5000,
+  # readable = FALSE
+
+# )
+```
+
+
+```{r}
+# Without universe
+GO_ORA<-enrichGO(
+  rownames(tab_sig),
+
+  OrgDb=org.Hs.eg.db,
+  keyType = "UNIPROT",
+  ont = "BP",
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  universe=rownames(tab),
+  qvalueCutoff = 0.2,
+   # minGSSize = 1,
+   # maxGSSize = 5000,
+  readable = FALSE
+
+)
+library(rrvgo)
+GO_ORA<-
+GO_ORA@result %>% filter(p.adjust<=0.05)
+
+
+
+if(dim(GO_ORA)[1]>20){
+
+
+simMatrix <- calculateSimMatrix(GO_ORA$ID ,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+
+scores <- setNames(-log10(GO_ORA$qvalue), GO_ORA$ID)
+reducedTerms <- reduceSimMatrix(simMatrix,
+                                scores,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+treemapPlot(reducedTerms)
+
+GO_ORA<-merge(GO_ORA,reducedTerms,by.x="ID",by.y="go")
+datatable_jm(GO_ORA,column = c("geneID","term"))
+}else{
+  datatable_jm(GO_ORA,column = c("geneID"))
+}
+
+```
+
+With universe there are not any term significative
+```{r}
+# Without universe
+GO_ORA<-enrichGO(
+  rownames(tab_sig),
+
+  OrgDb=org.Hs.eg.db,
+  keyType = "UNIPROT",
+  ont = "BP",
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  # universe=rownames(tab),
+   qvalueCutoff = 0.2,
+   # minGSSize = 1,
+   # maxGSSize = 5000,
+  readable = T
+
+)
+library(rrvgo)
+GO_ORA<-
+GO_ORA@result %>% filter(p.adjust<=0.05)
+
+
+
+if(dim(GO_ORA)[1]>20){
+
+
+simMatrix <- calculateSimMatrix(GO_ORA$ID ,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+
+scores <- setNames(-log10(GO_ORA$qvalue), GO_ORA$ID)
+reducedTerms <- reduceSimMatrix(simMatrix,
+                                scores,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+treemapPlot(reducedTerms)
+
+
+GO_ORA<-merge(GO_ORA,reducedTerms,by.x="ID",by.y="go")
+datatable_jm(GO_ORA,column = c("geneID","term"))
+}else{
+  datatable_jm(GO_ORA,column = c("geneID"))
+  
+}
+
+save(GO_ORA,file = "GO_ORA_nouniverse")
+gens_enrich_df<-
+GO_ORA %>%
+  tidyr::separate_rows(geneID, sep = "/") 
+
+cat("### Table with gens splited")
+
+datatable_jm(gens_enrich_df)
+
+```
+
+
+
+## GSEA
+
+```{r}
+# geneList<-tab$logFC
+# names(geneList)<-rownames(tab)
+# geneList<-sort(geneList,decreasing = T)
+# GO_GSEA <- gseGO(geneList     = geneList,
+#               OrgDb        = org.Hs.eg.db,
+#               ont          = "BP",
+#               keyType = "UNIPROT",
+# 
+#               # minGSSize    = 100,
+#               # maxGSSize    = 500,
+#               pvalueCutoff = 0.05,
+#               # readable=T,
+#               verbose      = FALSE)
+# 
+
+geneList<-tab$logFC
+names(geneList)<-tab$symbol
+geneList<-sort(geneList,decreasing = T)
+geneList<-geneList[!is.na(names(geneList))]
+GO_GSEA <- gseGO(geneList     = geneList,
+              OrgDb        = org.Hs.eg.db,
+              ont          = "BP",
+              keyType = "SYMBOL",
+
+              # minGSSize    = 100,
+              # maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              # readable=T,
+              verbose      = FALSE)
+
+
+library(rrvgo)
+GO_GSEA<-GO_GSEA@result %>% filter(p.adjust<=0.05)
+if(dim(GO_GSEA)[1]>20){
+
+
+simMatrix <- calculateSimMatrix(GO_GSEA$ID ,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+
+scores <- setNames(-log10(GO_GSEA$qvalue), GO_GSEA$ID)
+reducedTerms <- reduceSimMatrix(simMatrix,
+                                scores,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+treemapPlot(reducedTerms)
+
+GO_GSEA<-merge(GO_GSEA,reducedTerms,by.x="ID",by.y="go")
+datatable_jm(GO_GSEA,column = c("core_enrichment","leading_edge","term"))
+}else{
+  datatable_jm(GO_GSEA,column = c("core_enrichment","leading_edge"))
+}
+
+save(GO_GSEA,file = "GO_GSEA")
+
+gens_enrich_df<-
+GO_GSEA %>%
+  tidyr::separate_rows(core_enrichment, sep = "/") 
+
+cat("### Table with gens splited")
+datatable_jm(gens_enrich_df)
+
+```
+
+# KEGG
+
+## ORA
+
+```{r}
+kegg<-enrichKEGG(tab_sig$entrez,
+                 organism = "hsa",
+                 universe = tab$entrez,
+
+                 # keyType = "entrez",
+                 pvalueCutoff = 0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff = 0.2,
+                 use_internal_data = FALSE)
+
+kegg<-setReadable(kegg,OrgDb = org.Hs.eg.db,keyType = "ENTREZID")
+
+
+kegg_sig<-
+kegg@result %>%
+  filter(p.adjust<=0.05)
+
+cat("### Table with gens splited")
+
+datatable_jm(kegg_sig,"geneID")
+save(kegg_sig,file = "kegg_sig_universe")
+
+
+
+gens_enrich_df<-
+kegg_sig %>%
+  tidyr::separate_rows(geneID, sep = "/") 
+
+cat("### Table with gens splited")
+
+datatable_jm(gens_enrich_df)
+```
+
+```{r}
+
+kegg<-enrichKEGG(tab_sig$entrez,
+                 organism = "hsa",
+                 # universe = rownames(tab),
+
+                 # keyType = "uniprot",
+                 pvalueCutoff = 0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff = 0.2,
+                 use_internal_data = FALSE)
+
+kegg<-setReadable(kegg,OrgDb = org.Hs.eg.db,keyType = "ENTREZID")
+kegg_sig<-
+kegg@result %>%
+  filter(p.adjust<=0.05)
+datatable_jm(kegg_sig,"geneID")
+
+save(kegg_sig,file = "kegg_sig_nouniverse")
+```
+
+
+
+## GSEA
+
+```{r}
+geneList<-tab$logFC
+names(geneList)<-tab$entrez
+geneList<-sort(geneList,decreasing = T)
+geneList<-geneList[!is.na(names(geneList))]
+kegg_gsea <- gseKEGG(geneList     = geneList,
+                     organism     = "hsa",
+                     pvalueCutoff = 0.05,
+                     pAdjustMethod = "BH",
+                      keyType       = "ncbi-geneid"
+                     )
+
+kegg_gsea<-setReadable(kegg_gsea,OrgDb = org.Hs.eg.db,keyType = "ENTREZID")
+kegg_gsea_sig<- kegg_gsea@result  %>%
+  filter(p.adjust<0.05)
+datatable_jm(kegg_gsea_sig,"core_enrichment")
+save(kegg_gsea_sig,file = "kegg_gsea_sig")
+
+gens_enrich_df<-
+kegg_gsea_sig %>%
+  tidyr::separate_rows(core_enrichment, sep = "/") 
+
+cat("### Table with gens splited")
+
+datatable_jm(gens_enrich_df)
+```
+
+# Table with non shared proteins
+
+
+```{r}
+load(file = "./data_A")
+load(file = "./data_C")
+
+
+
+# List of items
+x <- list(PL = data_A$Accession, aP = data_C$Accession)
+
+# 2D Venn diagram
+library(ggVennDiagram)
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+```
+
+## PL enrichment
+
+```{r}
+data_A_unique<-
+data_A$Accession[!data_A$Accession%in%data_C$Accession]
+GO_ORA<-enrichGO(
+  data_A_unique,
+
+  OrgDb=org.Hs.eg.db,
+  keyType = "UNIPROT",
+  ont = "BP",
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  universe=rownames(tab),
+   qvalueCutoff = 0.2,
+   # minGSSize = 1,
+   # maxGSSize = 5000,
+  readable = FALSE
+
+)
+library(rrvgo)
+GO_ORA<-
+GO_ORA@result %>% filter(p.adjust<=0.05)
+
+
+
+if(dim(GO_ORA)[1]>20){
+
+
+simMatrix <- calculateSimMatrix(GO_ORA$ID ,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+
+scores <- setNames(-log10(GO_ORA$qvalue), GO_ORA$ID)
+reducedTerms <- reduceSimMatrix(simMatrix,
+                                scores,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+treemapPlot(reducedTerms)
+
+GO_ORA<-merge(GO_ORA,reducedTerms,by.x="ID",by.y="go")
+datatable_jm(GO_ORA,column = c("geneID","term"))
+}else{
+  datatable_jm(GO_ORA,column = c("geneID"))
+}
+
+
+gens_enrich_df<-
+GO_ORA %>%
+  tidyr::separate_rows(geneID, sep = "/") 
+
+cat("### Table with gens splited")
+datatable_jm(gens_enrich_df)
+
+
+kegg<-enrichKEGG(data_A_unique,
+                 organism = "hsa",
+                 universe = rownames(tab),
+
+                 keyType = "uniprot",
+                 pvalueCutoff = 0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff = 0.2,
+                 use_internal_data = FALSE)
+
+
+kegg_sig<-
+kegg@result %>%
+  filter(p.adjust<=0.05)
+datatable_jm(kegg_sig,"geneID")
+
+
+
+gens_enrich_df<-
+kegg_sig %>%
+  tidyr::separate_rows(geneID, sep = "/") 
+
+cat("### Table with gens splited")
+datatable_jm(gens_enrich_df)
+
+
+
+```
+
+## aP enrichment
+
+
+```{r}
+data_C_unique<-
+data_C$Accession[!data_C$Accession%in%data_A$Accession]
+
+GO_ORA<-enrichGO(
+  data_C_unique,
+
+  OrgDb=org.Hs.eg.db,
+  keyType = "UNIPROT",
+  ont = "BP",
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  universe=rownames(tab),
+   qvalueCutoff = 0.2,
+   # minGSSize = 1,
+   # maxGSSize = 5000,
+  readable = FALSE
+
+)
+library(rrvgo)
+GO_ORA<-
+GO_ORA@result %>% filter(p.adjust<=0.05)
+
+
+
+if(dim(GO_ORA)[1]>20){
+
+
+simMatrix <- calculateSimMatrix(GO_ORA$ID ,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+
+scores <- setNames(-log10(GO_ORA$qvalue), GO_ORA$ID)
+reducedTerms <- reduceSimMatrix(simMatrix,
+                                scores,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+treemapPlot(reducedTerms)
+
+GO_ORA<-merge(GO_ORA,reducedTerms,by.x="ID",by.y="go")
+datatable_jm(GO_ORA,column = c("geneID","term"))
+}else{
+  datatable_jm(GO_ORA,column = c("geneID"))
+}
+
+
+gens_enrich_df<-
+GO_ORA %>%
+  tidyr::separate_rows(geneID, sep = "/") 
+
+cat("### Table with gens splited")
+datatable_jm(gens_enrich_df)
+
+
+kegg<-enrichKEGG(data_C_unique,
+                 organism = "hsa",
+                 universe = rownames(tab),
+
+                 keyType = "uniprot",
+                 pvalueCutoff = 0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff = 0.2,
+                 use_internal_data = FALSE)
+
+
+kegg_sig<-
+kegg@result %>%
+  filter(p.adjust<=0.05)
+datatable_jm(kegg_sig,"geneID")
+
+gens_enrich_df<-
+GO_ORA %>%
+  tidyr::separate_rows(geneID, sep = "/") 
+
+cat("### Table with gens splited")
+datatable_jm(gens_enrich_df)
+
+
+
+```
+
+
+

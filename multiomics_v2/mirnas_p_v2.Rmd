@@ -1,0 +1,1374 @@
+---
+title: "Proteomic data + miRNA"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    theme: cerulean
+    highlight: kate
+    code_folding: hide
+  always_allow_html: true  
+  pdf_document:
+    toc: yes
+editor_options:
+  chunk_output_type: console
+---
+
+# miRNA selected
+
+  *   miRNA 210-3p
+  *   miRNA 320a
+  *   miRNA 320b
+  *   miRNA 4745-5p
+
+```{r,echo=F}
+knitr::opts_chunk$set(echo = TRUE,warning = F,message = F,fig.height=10, fig.width=10)
+```
+
+```{r,echo=F}
+source("/usr/local/lib/R/site-library/AnalisisArrays2/templates/llibreries_Informes.R")
+
+```
+
+```{r}
+
+celfiles<-list.celfiles("./cel_files/",full.names=TRUE)
+data<-read.celfiles(celfiles)
+
+# Anotació fenotipica
+pheno <- read.csv(file="./cel_files/Registremostres.csv",sep=";")
+
+pheno<-pheno %>%
+  mutate(NaCl_envellides=ifelse(NaCl_envellides =="si"&PBS_NaCl=="si",1,
+                                ifelse(NaCl_envellides =="si"&PBS_NaCl=="no",2,"no")))
+
+
+```
+
+```{r}
+
+datatable_jm<-function(x,column=NULL){
+  
+  # if(is.na(column)){column<-0}
+
+datatable(
+  x,
+  extensions = 'Buttons', 
+  filter = list(
+    position = 'top', clear = T
+  ),
+  options = list(dom = 'Blfrtip',buttons = list(list(extend = 'colvis')),
+                 buttons = list('copy', 'print',
+                                list(extend = 'collection',
+                                     buttons = c('csv', 'excel', 'pdf'),
+                                     text = 'Download')),
+                 columnDefs = list(list(visible=FALSE, targets=column))))}
+
+
+```
+
+```{r}
+pheno$nom<-gsub("_[(]miRNA-4_0).CEL","",pheno$Nombre.Cel.file)
+rownames(pheno)<-pheno$Nombre.Cel.file
+# phenoData(data) <- AnnotatedDataFrame(pheno)
+pheno_ano<-AnnotatedDataFrame(pheno)
+
+data<-read.celfiles(celfiles, phenoData = pheno_ano)
+
+# RMA
+data_rma<-rma(data)
+library(dplyr)
+
+df <- read.csv("/home/SHARED/annotation_affymetrix/miRNA-4_0-st-v1.annotations.20160922.csv",comment.char = "#")
+
+df<-
+df %>% 
+  group_by(Accession) %>% 
+  mutate(gene=paste(Accession, collapse="|"))
+
+feat<-df[match(rownames(data_rma@featureData@data),df$Probe.Set.Name),]
+feat<-AnnotatedDataFrame(feat)
+rownames(feat@data)<-
+rownames(data_rma@featureData)
+
+data_rma@featureData<-feat
+
+dup.ids <- feat@data$Accession[duplicated(feat@data$Accession)] %>% 
+  unique %>%
+  sort
+
+data_rma<-
+data_rma[,pData(data_rma)$temps!=2|is.na(pData(data_rma)$temps)]
+data_rma<-
+data_rma[data_rma@featureData@data$Species.Scientific.Name=="Homo sapiens",]
+data_rma<-data_rma[data_rma@featureData@data$Sequence.Type=="miRNA",]
+exp_rma <- exprs(data_rma)
+
+
+
+```
+
+
+# DEG
+
+```{r}
+# Filtre
+comparativa<-"NaCl_envellides"
+
+data_rma<-data_rma[,data_rma@phenoData@data[,comparativa]!="no"]
+# mostres: 
+# mostres<-c("C2H","C1H","C3H","A1H","A2H","A3H")
+# data_rma_f<-data_rma[,data_rma@phenoData@data$nom%in%mostres]
+
+g1<-levels(as.factor(data_rma@phenoData@data[,comparativa]))[1]
+g2<-levels(as.factor(data_rma@phenoData@data[,comparativa]))[2]
+
+data_rma@phenoData@data[,comparativa]<-gsub(g1,"NaCl",data_rma@phenoData@data[,comparativa])
+data_rma@phenoData@data[,comparativa]<-gsub(g2,"envellides",data_rma@phenoData@data[,comparativa])
+g1<-"NaCl"
+g2<-"envellides"
+data_rma<-
+data_rma[data_rma@featureData@data$Species.Scientific.Name=="Homo sapiens",]
+data_rma<-data_rma[data_rma@featureData@data$Sequence.Type=="miRNA",]
+data_rma_ind<-data_rma
+exp_rma <- exprs(data_rma_ind)
+
+phenotype_names <- ifelse(str_detect(pData(data_rma)[,comparativa],g1), g1, g2)
+
+annotation_for_heatmap <- data.frame(Phenotype = phenotype_names)
+
+row.names(annotation_for_heatmap) <- pData(data_rma_ind)$Id_de_la_muestra
+
+dists <- as.matrix(dist(t(exp_rma), method = "manhattan"))
+rownames(dists) <- pData(data_rma_ind)$Id_de_la_muestra
+hmcol <- rev(colorRampPalette(RColorBrewer::brewer.pal(9, "YlOrRd"))(255))
+colnames(dists) <- NULL
+diag(dists) <- NA
+
+ann_colors <- list(
+  Phenotype = c(g1 = "chartreuse4", g2 = "burlywood3")
+  
+                   )
+
+names(ann_colors$Phenotype)<-c(g1,g2)
+# png(paste0("resultats/","/PLOTS/heatmap.png"),width = 800,height = 800,res=150)
+# pheatmap(dists, col = (hmcol), 
+#          
+#          annotation_col = annotation_for_heatmap,
+#          annotation_colors = ann_colors,
+#          legend = TRUE, 
+#          treeheight_row = 10,
+#          legend_breaks = c(min(dists, na.rm = TRUE), 
+#                          max(dists, na.rm = TRUE)), 
+#          legend_labels = (c("small distance", "large distance")),
+#          main = "Heatmap calibrated samples")
+.tmp<-dev.off()
+# knitr::include_graphics("resultats/PLOTS/heatmap.png")
+```
+
+# Taula
+  
+```{r}
+groups = phenotype_names
+f = factor(groups)
+design = model.matrix(~ 0 + f)
+colnames(design) = c(g1,g2)
+data.fit = lmFit(exprs(data_rma_ind),design)
+
+lev <- c(g1, g2)
+
+
+
+# Parsing
+a<-c(g1,"-",g2)
+astr=paste(a, collapse="")
+prestr="makeContrasts("
+poststr=",levels=design)"
+commandstr=paste(prestr,astr,poststr,sep="")
+
+
+
+
+
+contrast.matrix=eval(parse(text=commandstr))
+# colnames(contrast.matrix)<-paste(g1,"-",g2)
+data.fit.con = contrasts.fit(data.fit,contrast.matrix)
+data.fit.eb = eBayes(data.fit.con)
+
+tab = topTable(data.fit.eb,coef=1,
+               # lfc = log2(1.5),
+               number=Inf,adjust.method="BH",genelist = data_rma_ind@featureData@data )   
+tab_all = topTable(data.fit.eb,coef=1,number=Inf,adjust.method="BH",genelist = data_rma_ind@featureData@data )   
+
+cols<-c("logFC","AveExpr")
+cols1<-c("P.Value", "adj.P.Val")
+
+
+
+FC_tab<-
+tab %>% filter(P.Value<=0.05,abs(logFC)>=log2(1.5)) %>% 
+   dplyr::select(-c(GeneChip.Array,Annotation.Date,Sequence,Sequence.Source,Probe.Set.ID,B,t,Probe.Set.Name,Alignments,Clustered.miRNAs.within.10kb,Genome.Context,Target.Genes)) %>% 
+  mutate(across(cols, round, 3)) %>% 
+  mutate(across(all_of(cols1), format.pval))
+
+
+
+datatable_jm(FC_tab)
+```
+
+# Volcano
+```{r}
+mirna_int<-c("hsa-miR-4745-5p","hsa-miR-210-3p","hsa-miR-320a","hsa-miR-320b","hsa-miR-320c")
+tab_all$diffexpressed <- "NO"
+# if log2Foldchange > 0.6 and pvalue < 0.05, set as "UP" 
+tab_all$diffexpressed[tab_all$logFC > log2(1.5) & tab_all$P.Value < 0.05] <- "UP"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+tab_all$diffexpressed[tab_all$logFC < -log2(1.5) & tab_all$P.Value < 0.05] <- "DOWN"
+
+
+tab_all$delabel <- NA
+tab_all$delabel[tab_all$diffexpressed != "NO"] <- tab_all$Transcript.ID.Array.Design.[tab_all$diffexpressed != "NO"]
+tab_all$delabel[!tab_all$delabel%in%mirna_int]<-NA
+
+# plot adding up all layers we have seen so far
+ggplot(data=tab_all, aes(x=logFC, y=-log10(P.Value), col=diffexpressed,
+                      label=delabel))+
+        geom_point() + 
+        theme_minimal() +
+         geom_text_repel() +
+        scale_color_manual(values=c("blue", "black", "red")) +
+        geom_vline(xintercept=c(-0.6, 0.6), col="red") +
+        geom_hline(yintercept=-log10(0.05), col="red")+
+  ggtitle("PL vs aP")
+```
+
+# Heatmap
+```{r}
+gens_SIG<-tab %>% filter(P.Value<=0.05,abs(logFC)>=log2(1.5)) %>% 
+  .$Probe.Set.Name
+
+
+data_rma_SIG<-data_rma[data_rma@featureData@data$Probe.Set.Name%in%gens_SIG,]
+data_rma_SIG_df<-exprs(data_rma_SIG)
+rownames(data_rma_SIG_df)<-data_rma_SIG@featureData@data$Transcript.ID.Array.Design.
+hmcol <- rev(colorRampPalette(RColorBrewer::brewer.pal(5, "YlOrRd"))(255))
+colnames(dists) <- NULL
+diag(dists) <- NA
+
+ann_colors <- list(
+  Phenotype = c(g1 = "chartreuse4", g2 = "burlywood3")
+  
+                   )
+names(ann_colors$Phenotype)<-c(g1,g2)
+colnames(data_rma_SIG_df)<-gsub("_[(]miRNA-4_0).CEL","",colnames(data_rma_SIG_df))
+
+p1<-pheatmap(show_rownames = F,
+  data_rma_SIG_df,cutree_rows = 2,cutree_cols = 2,
+         annotation_col = annotation_for_heatmap,
+         annotation_colors = ann_colors,scale = "row",
+         legend = F, 
+         treeheight_row = 50,
+         legend_breaks = c(min(dists, na.rm = TRUE), 
+                         max(dists, na.rm = TRUE)), 
+         legend_labels = (c("small distance", "large distance")),
+         main = "miRNA FC>1.5 & p<=0.05")
+
+p1
+```
+
+
+```{r}
+library(ComplexHeatmap)
+data_mirna_int<-data_rma_SIG_df[mirna_int,]
+
+save(data_mirna_int,file = "data_mirna_int")
+mat<-data_rma_SIG_df
+noms<-rownames(data_rma_SIG_df)
+noms[!noms%in%mirna_int]<-""
+ top_annotation = HeatmapAnnotation(Group = anno_block(gp = gpar(fill = c("#BD7575", "#7EA669")),
+                                                       labels = c("PL", "aP"), 
+        labels_gp = gpar(col = "white", fontsize = 10)),
+                                    Samples = anno_boxplot(mat))
+Heatmap(mat,name="Expression", row_labels = noms,
+        column_title = paste0("Top ",dim(mat)[1]," proteins DEG"),
+        rect_gp = gpar(col = "white", lwd = 0.5),
+        column_km = 2,
+        # row_split = factor(rep(c("A"),15)),
+         row_km = 2,
+        border = TRUE,
+        right_annotation = rowAnnotation(Proteins = anno_boxplot(mat)),
+        top_annotation = top_annotation
+        )
+```
+
+# Find Targets 
+
+```{r}
+
+library(multiMiR)
+mirna_int<-c("hsa-miR-4745-5p","hsa-miR-210-3p","hsa-miR-320a","hsa-miR-320b","hsa-miR-320c")
+
+targets <- get_multimir(mirna = mirna_int, summary = T)
+table(targets@data$mature_mirna_id)
+```
+
+
+# hsa-miR-4745-5p
+
+## Proteins
+
+Gens disregulated in proteins and by miRNA
+
+```{r}
+target_symbol<-
+targets@data%>%
+  filter(mature_mirna_id ==mirna_int[1]) %>% 
+  dplyr::select(target_symbol)
+
+target_symbol<-(unique(target_symbol$target_symbol))
+
+
+target_entrez<-
+targets@data%>%
+  filter(mature_mirna_id ==mirna_int[1]) %>% 
+  dplyr::select(target_entrez)
+
+target_entrez<-(unique(target_entrez$target_entrez))
+RNA_sig<-get(load("RNA_tab_sig"))
+dim(RNA_sig)
+
+
+
+
+
+RNA_sig_mirna<-
+RNA_sig %>% 
+  filter(RNA_sig$symbol%in%target_symbol)
+
+datatable_jm(RNA_sig_mirna)
+
+
+```
+
+```{r}
+GO_ORA_RNA_nu<-get(load("GO_ORA_nouniverse"))
+
+for(i in 1:dim(GO_ORA_RNA_nu)[1]){
+GO_ORA_RNA_nu$num_gens[i]<-sum(target_symbol%in%strsplit(GO_ORA_RNA_nu$geneID[i],"/")[[1]])
+GO_ORA_RNA_nu$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(GO_ORA_RNA_nu$geneID[i],"/")[[1]]],collapse = ", ")
+}
+datatable_jm(GO_ORA_RNA_nu %>% filter(num_gens>0))
+
+
+
+
+KEGG_ORA_RNA_nu<-get(load("kegg_sig_nouniverse"))
+
+for(i in 1:dim(KEGG_ORA_RNA_nu)[1]){
+KEGG_ORA_RNA_nu$num_gens[i]<-sum(target_symbol%in%strsplit(KEGG_ORA_RNA_nu$geneID[i],"/")[[1]])
+KEGG_ORA_RNA_nu$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(KEGG_ORA_RNA_nu$geneID[i],"/")[[1]]],collapse = ", ")
+}
+
+datatable_jm(KEGG_ORA_RNA_nu %>% filter(num_gens>0))
+
+
+GO_GSEA_RNA<-get(load("./GO_GSEA"))
+
+for(i in 1:dim(GO_GSEA_RNA)[1]){
+GO_GSEA_RNA$num_gens[i]<-sum(target_symbol%in%strsplit(GO_GSEA_RNA$core_enrichment[i],"/")[[1]])
+GO_GSEA_RNA$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(GO_GSEA_RNA$core_enrichment[i],"/")[[1]]],collapse = ", ")
+}
+
+
+datatable_jm(GO_GSEA_RNA%>% filter(num_gens>0))
+
+KEEG_GSEA_RNA<-get(load("./kegg_gsea_sig"))
+
+
+
+for(i in 1:dim(KEEG_GSEA_RNA)[1]){
+KEEG_GSEA_RNA$num_gens[i]<-sum(target_symbol%in%strsplit(KEEG_GSEA_RNA$core_enrichment[i],"/")[[1]])
+KEEG_GSEA_RNA$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(KEEG_GSEA_RNA$core_enrichment[i],"/")[[1]]],collapse = ", ")
+}
+
+datatable_jm(KEEG_GSEA_RNA%>% filter(num_gens>0))
+
+```
+
+
+##  Functional enrichment
+
+```{r}
+
+GO_ORA_mirna<-enrichGO(
+  target_symbol,
+
+  OrgDb=org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  # universe=rownames(tab),
+  qvalueCutoff = 0.2,
+   # minGSSize = 1,
+   # maxGSSize = 5000,
+  readable = FALSE)
+
+
+GO_ORA_mirna<-GO_ORA_mirna@result %>% filter(p.adjust<=0.05)
+
+datatable_jm(GO_ORA_mirna,column = "geneID")
+# ORA
+# miRNA comuns
+
+# 2D Venn diagram
+library(ggVennDiagram)
+x <- list(GO_miRNA = GO_ORA_mirna$ID, GO_RNA_ORA = GO_ORA_RNA_nu$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+library(GOSim)
+
+test<-getTermSim(c(GO_ORA_mirna$ID,GO_ORA_RNA_nu$ID))
+
+test<-test[,GO_ORA_mirna$ID]
+test<-test[!rownames(test)%in%GO_ORA_mirna$ID,]
+test<-data.frame(test)
+corr<-c()
+
+for(i in 1:dim(test)[1]){
+corr[i]<-paste0(colnames(test[i,])[test[i,]>0.7],collapse = ", ")
+
+}
+corr<-data.frame(corr)
+rownames(corr)<-rownames(test)
+corr<-corr %>% filter(corr!="")
+GO_ORA_RNA_nu$GO_miRNA_1<-corr$corr[match(GO_ORA_RNA_nu$ID,rownames(corr))]
+GO_ORA_RNA_nu<-
+GO_ORA_RNA_nu %>% filter(!is.na(GO_miRNA_1))
+
+datatable_jm(GO_ORA_RNA_nu,column = "geneID")
+
+
+# GSEA
+# miRNA comuns
+
+# 2D Venn diagram
+library(ggVennDiagram)
+x <- list(GO_miRNA = GO_ORA_mirna$ID, GO_RNA_GSEA = GO_GSEA_RNA$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+library(GOSim)
+
+test<-getTermSim(c(GO_ORA_mirna$ID,GO_GSEA_RNA$ID))
+
+test<-test[,GO_ORA_mirna$ID]
+test<-test[!rownames(test)%in%GO_ORA_mirna$ID,]
+test<-data.frame(test)
+corr<-c()
+
+for(i in 1:dim(test)[1]){
+corr[i]<-paste0(colnames(test[i,])[test[i,]>0.7],collapse = ", ")
+
+}
+corr<-data.frame(corr)
+rownames(corr)<-rownames(test)
+corr<-corr %>% filter(corr!="")
+GO_GSEA_RNA$GO_miRNA_1<-corr$corr[match(GO_GSEA_RNA$ID,rownames(corr))]
+GO_GSEA_RNA<-GO_GSEA_RNA %>% filter(!is.na(GO_miRNA_1))
+
+datatable_jm(GO_GSEA_RNA,column = "core_enrichment")
+
+
+
+```
+
+
+```{r}
+
+kegg<-enrichKEGG(target_entrez,
+                 organism = "hsa",
+                 # universe = rownames(tab),
+                 
+                 pvalueCutoff = 0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff = 0.2,
+                 use_internal_data = FALSE)
+
+kegg<-kegg@result
+kegg_sig<-kegg %>% filter(p.adjust<=0.05)
+datatable_jm(kegg_sig)
+
+
+
+library(ggVennDiagram)
+x <- list(KEGG_miRNA = kegg_sig$ID, KEGG_RNA_GSEA = kegg_gsea_sig$ID,
+          KEGG_RNA_ORA = KEGG_ORA_RNA_nu$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+
+```
+
+
+
+
+# hsa-miR-210-3p
+
+## Proteins
+
+Gens disregulated in proteins and by miRNA
+
+```{r}
+target_symbol<-
+targets@data%>%
+  filter(mature_mirna_id ==mirna_int[2]) %>% 
+  dplyr::select(target_symbol)
+
+target_symbol<-(unique(target_symbol$target_symbol))
+
+
+target_entrez<-
+targets@data%>%
+  filter(mature_mirna_id ==mirna_int[2]) %>% 
+  dplyr::select(target_entrez)
+
+target_entrez<-(unique(target_entrez$target_entrez))
+RNA_sig<-get(load("RNA_tab_sig"))
+dim(RNA_sig)
+
+
+
+
+
+RNA_sig_mirna<-
+RNA_sig %>% 
+  filter(RNA_sig$symbol%in%target_symbol)
+
+datatable_jm(RNA_sig_mirna)
+
+
+```
+
+```{r}
+GO_ORA_RNA_nu<-get(load("GO_ORA_nouniverse"))
+
+for(i in 1:dim(GO_ORA_RNA_nu)[1]){
+GO_ORA_RNA_nu$num_gens[i]<-sum(target_symbol%in%strsplit(GO_ORA_RNA_nu$geneID[i],"/")[[1]])
+GO_ORA_RNA_nu$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(GO_ORA_RNA_nu$geneID[i],"/")[[1]]],collapse = ", ")
+}
+datatable_jm(GO_ORA_RNA_nu %>% filter(num_gens>0))
+
+
+
+
+KEGG_ORA_RNA_nu<-get(load("kegg_sig_nouniverse"))
+
+for(i in 1:dim(KEGG_ORA_RNA_nu)[1]){
+KEGG_ORA_RNA_nu$num_gens[i]<-sum(target_symbol%in%strsplit(KEGG_ORA_RNA_nu$geneID[i],"/")[[1]])
+KEGG_ORA_RNA_nu$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(KEGG_ORA_RNA_nu$geneID[i],"/")[[1]]],collapse = ", ")
+}
+
+datatable_jm(KEGG_ORA_RNA_nu %>% filter(num_gens>0))
+
+
+GO_GSEA_RNA<-get(load("./GO_GSEA"))
+
+for(i in 1:dim(GO_GSEA_RNA)[1]){
+GO_GSEA_RNA$num_gens[i]<-sum(target_symbol%in%strsplit(GO_GSEA_RNA$core_enrichment[i],"/")[[1]])
+GO_GSEA_RNA$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(GO_GSEA_RNA$core_enrichment[i],"/")[[1]]],collapse = ", ")
+}
+
+
+datatable_jm(GO_GSEA_RNA%>% filter(num_gens>0))
+
+KEEG_GSEA_RNA<-get(load("./kegg_gsea_sig"))
+
+
+
+for(i in 1:dim(KEEG_GSEA_RNA)[1]){
+KEEG_GSEA_RNA$num_gens[i]<-sum(target_symbol%in%strsplit(KEEG_GSEA_RNA$core_enrichment[i],"/")[[1]])
+KEEG_GSEA_RNA$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(KEEG_GSEA_RNA$core_enrichment[i],"/")[[1]]],collapse = ", ")
+}
+
+datatable_jm(KEEG_GSEA_RNA%>% filter(num_gens>0))
+
+```
+
+
+##  Functional enrichment
+
+```{r}
+
+GO_ORA_mirna<-enrichGO(
+  target_symbol,
+
+  OrgDb=org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  # universe=rownames(tab),
+  qvalueCutoff = 0.2,
+   # minGSSize = 1,
+   # maxGSSize = 5000,
+  readable = FALSE)
+
+
+GO_ORA_mirna<-GO_ORA_mirna@result %>% filter(p.adjust<=0.05)
+
+datatable_jm(GO_ORA_mirna,column = "geneID")
+# ORA
+# miRNA comuns
+
+# 2D Venn diagram
+library(ggVennDiagram)
+x <- list(GO_miRNA = GO_ORA_mirna$ID, GO_RNA_ORA = GO_ORA_RNA_nu$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+library(GOSim)
+datatable_jm(GO_ORA_mirna[GO_ORA_mirna$ID%in% GO_ORA_RNA_nu$ID,],"geneID")
+
+test<-getTermSim(c(GO_ORA_mirna$ID,GO_ORA_RNA_nu$ID))
+test<-test[,GO_ORA_mirna$ID]
+test<-test[!rownames(test)%in%GO_ORA_mirna$ID,]
+test<-data.frame(test)
+corr<-c()
+
+for(i in 1:dim(test)[1]){
+corr[i]<-paste0(colnames(test[i,])[test[i,]>0.7],collapse = ", ")
+
+}
+corr<-data.frame(corr)
+rownames(corr)<-rownames(test)
+corr<-corr %>% filter(corr!="")
+GO_ORA_RNA_nu$GO_miRNA_1<-corr$corr[match(GO_ORA_RNA_nu$ID,rownames(corr))]
+GO_ORA_RNA_nu<-
+GO_ORA_RNA_nu %>% filter(!is.na(GO_miRNA_1))
+
+datatable_jm(GO_ORA_RNA_nu,column = "geneID")
+
+
+# GSEA
+# miRNA comuns
+
+# 2D Venn diagram
+library(ggVennDiagram)
+x <- list(GO_miRNA = GO_ORA_mirna$ID, GO_RNA_GSEA = GO_GSEA_RNA$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+datatable_jm(GO_ORA_mirna[GO_ORA_mirna$ID%in%GO_GSEA_RNA$ID,],column ="geneID" )
+library(GOSim)
+
+test<-getTermSim(c(GO_ORA_mirna$ID,GO_GSEA_RNA$ID),verbose = T)
+
+test<-test[,GO_ORA_mirna$ID]
+test<-test[!rownames(test)%in%GO_ORA_mirna$ID,]
+test<-data.frame(test)
+corr<-c()
+
+for(i in 1:dim(test)[1]){
+corr[i]<-paste0(colnames(test[i,])[test[i,]>0.7],collapse = ", ")
+
+}
+corr<-data.frame(corr)
+rownames(corr)<-rownames(test)
+corr<-corr %>% filter(corr!="")
+GO_GSEA_RNA$GO_miRNA_1<-corr$corr[match(GO_GSEA_RNA$ID,rownames(corr))]
+GO_GSEA_RNA<-GO_GSEA_RNA %>% filter(!is.na(GO_miRNA_1))
+
+datatable_jm(GO_GSEA_RNA,column = "core_enrichment")
+
+
+
+```
+
+
+```{r}
+
+kegg<-enrichKEGG(target_entrez,
+                 organism = "hsa",
+                 # universe = rownames(tab),
+                 
+                 pvalueCutoff = 0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff = 0.2,
+                 use_internal_data = FALSE)
+
+kegg<-kegg@result
+kegg_sig<-kegg %>% filter(p.adjust<=0.05)
+datatable_jm(kegg_sig)
+
+
+
+library(ggVennDiagram)
+x <- list(KEGG_miRNA = kegg_sig$ID, KEGG_RNA_GSEA = kegg_gsea_sig$ID,
+          KEGG_RNA_ORA = KEGG_ORA_RNA_nu$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+
+```
+
+
+# hsa-miR-320a
+
+## Proteins
+
+Gens disregulated in proteins and by miRNA
+
+```{r}
+target_symbol<-
+targets@data%>%
+  filter(mature_mirna_id ==mirna_int[3]) %>% 
+  dplyr::select(target_symbol)
+
+target_symbol<-(unique(target_symbol$target_symbol))
+
+
+target_entrez<-
+targets@data%>%
+  filter(mature_mirna_id ==mirna_int[3]) %>% 
+  dplyr::select(target_entrez)
+
+target_entrez<-(unique(target_entrez$target_entrez))
+RNA_sig<-get(load("RNA_tab_sig"))
+dim(RNA_sig)
+
+
+
+
+
+RNA_sig_mirna<-
+RNA_sig %>% 
+  filter(RNA_sig$symbol%in%target_symbol)
+
+datatable_jm(RNA_sig_mirna)
+
+
+```
+
+```{r}
+GO_ORA_RNA_nu<-get(load("GO_ORA_nouniverse"))
+
+for(i in 1:dim(GO_ORA_RNA_nu)[1]){
+GO_ORA_RNA_nu$num_gens[i]<-sum(target_symbol%in%strsplit(GO_ORA_RNA_nu$geneID[i],"/")[[1]])
+GO_ORA_RNA_nu$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(GO_ORA_RNA_nu$geneID[i],"/")[[1]]],collapse = ", ")
+}
+datatable_jm(GO_ORA_RNA_nu %>% filter(num_gens>0))
+
+
+
+
+KEGG_ORA_RNA_nu<-get(load("kegg_sig_nouniverse"))
+
+for(i in 1:dim(KEGG_ORA_RNA_nu)[1]){
+KEGG_ORA_RNA_nu$num_gens[i]<-sum(target_symbol%in%strsplit(KEGG_ORA_RNA_nu$geneID[i],"/")[[1]])
+KEGG_ORA_RNA_nu$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(KEGG_ORA_RNA_nu$geneID[i],"/")[[1]]],collapse = ", ")
+}
+
+datatable_jm(KEGG_ORA_RNA_nu %>% filter(num_gens>0))
+
+
+GO_GSEA_RNA<-get(load("./GO_GSEA"))
+
+for(i in 1:dim(GO_GSEA_RNA)[1]){
+GO_GSEA_RNA$num_gens[i]<-sum(target_symbol%in%strsplit(GO_GSEA_RNA$core_enrichment[i],"/")[[1]])
+GO_GSEA_RNA$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(GO_GSEA_RNA$core_enrichment[i],"/")[[1]]],collapse = ", ")
+}
+
+
+datatable_jm(GO_GSEA_RNA%>% filter(num_gens>0))
+
+KEEG_GSEA_RNA<-get(load("./kegg_gsea_sig"))
+
+
+
+for(i in 1:dim(KEEG_GSEA_RNA)[1]){
+KEEG_GSEA_RNA$num_gens[i]<-sum(target_symbol%in%strsplit(KEEG_GSEA_RNA$core_enrichment[i],"/")[[1]])
+KEEG_GSEA_RNA$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(KEEG_GSEA_RNA$core_enrichment[i],"/")[[1]]],collapse = ", ")
+}
+
+datatable_jm(KEEG_GSEA_RNA%>% filter(num_gens>0))
+
+```
+
+
+##  Functional enrichment
+
+```{r}
+
+GO_ORA_mirna<-enrichGO(
+  target_symbol,
+
+  OrgDb=org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  # universe=rownames(tab),
+  qvalueCutoff = 0.2,
+   # minGSSize = 1,
+   # maxGSSize = 5000,
+  readable = FALSE)
+
+
+GO_ORA_mirna<-GO_ORA_mirna@result %>% filter(p.adjust<=0.05)
+
+datatable_jm(GO_ORA_mirna,column = "geneID")
+# ORA
+# miRNA comuns
+
+# 2D Venn diagram
+library(ggVennDiagram)
+x <- list(GO_miRNA = GO_ORA_mirna$ID, GO_RNA_ORA = GO_ORA_RNA_nu$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+library(GOSim)
+datatable_jm(GO_ORA_mirna[GO_ORA_mirna$ID%in% GO_ORA_RNA_nu$ID,],"geneID")
+
+test<-getTermSim(c(GO_ORA_mirna$ID,GO_ORA_RNA_nu$ID))
+test<-test[,GO_ORA_mirna$ID]
+test<-test[!rownames(test)%in%GO_ORA_mirna$ID,]
+test<-data.frame(test)
+corr<-c()
+
+for(i in 1:dim(test)[1]){
+corr[i]<-paste0(colnames(test[i,])[test[i,]>0.7],collapse = ", ")
+
+}
+corr<-data.frame(corr)
+rownames(corr)<-rownames(test)
+corr<-corr %>% filter(corr!="")
+GO_ORA_RNA_nu$GO_miRNA_1<-corr$corr[match(GO_ORA_RNA_nu$ID,rownames(corr))]
+GO_ORA_RNA_nu<-
+GO_ORA_RNA_nu %>% filter(!is.na(GO_miRNA_1))
+
+datatable_jm(GO_ORA_RNA_nu,column = "geneID")
+
+
+# GSEA
+# miRNA comuns
+
+# 2D Venn diagram
+library(ggVennDiagram)
+x <- list(GO_miRNA = GO_ORA_mirna$ID, GO_RNA_GSEA = GO_GSEA_RNA$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+datatable_jm(GO_ORA_mirna[GO_ORA_mirna$ID%in%GO_GSEA_RNA$ID,],column ="geneID" )
+library(GOSim)
+
+test<-getTermSim(c(GO_ORA_mirna$ID,GO_GSEA_RNA$ID),verbose = T)
+
+test<-test[,GO_ORA_mirna$ID]
+test<-test[!rownames(test)%in%GO_ORA_mirna$ID,]
+test<-data.frame(test)
+corr<-c()
+
+for(i in 1:dim(test)[1]){
+corr[i]<-paste0(colnames(test[i,])[test[i,]>0.7],collapse = ", ")
+
+}
+corr<-data.frame(corr)
+rownames(corr)<-rownames(test)
+corr<-corr %>% filter(corr!="")
+GO_GSEA_RNA$GO_miRNA_1<-corr$corr[match(GO_GSEA_RNA$ID,rownames(corr))]
+GO_GSEA_RNA<-GO_GSEA_RNA %>% filter(!is.na(GO_miRNA_1))
+
+datatable_jm(GO_GSEA_RNA,column = "core_enrichment")
+
+
+
+```
+
+
+```{r}
+
+kegg<-enrichKEGG(target_entrez,
+                 organism = "hsa",
+                 # universe = rownames(tab),
+                 
+                 pvalueCutoff = 0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff = 0.2,
+                 use_internal_data = FALSE)
+
+kegg<-kegg@result
+kegg_sig<-kegg %>% filter(p.adjust<=0.05)
+datatable_jm(kegg_sig)
+
+
+
+library(ggVennDiagram)
+x <- list(KEGG_miRNA = kegg_sig$ID, KEGG_RNA_GSEA = kegg_gsea_sig$ID,
+          KEGG_RNA_ORA = KEGG_ORA_RNA_nu$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+
+```
+
+
+# hsa-miR-320b
+
+## Proteins
+
+Gens disregulated in proteins and by miRNA
+
+```{r}
+target_symbol<-
+targets@data%>%
+  filter(mature_mirna_id ==mirna_int[4]) %>% 
+  dplyr::select(target_symbol)
+
+target_symbol<-(unique(target_symbol$target_symbol))
+
+
+target_entrez<-
+targets@data%>%
+  filter(mature_mirna_id ==mirna_int[4]) %>% 
+  dplyr::select(target_entrez)
+
+target_entrez<-(unique(target_entrez$target_entrez))
+RNA_sig<-get(load("RNA_tab_sig"))
+dim(RNA_sig)
+
+
+
+
+
+RNA_sig_mirna<-
+RNA_sig %>% 
+  filter(RNA_sig$symbol%in%target_symbol)
+
+datatable_jm(RNA_sig_mirna)
+
+
+```
+
+```{r}
+GO_ORA_RNA_nu<-get(load("GO_ORA_nouniverse"))
+
+for(i in 1:dim(GO_ORA_RNA_nu)[1]){
+GO_ORA_RNA_nu$num_gens[i]<-sum(target_symbol%in%strsplit(GO_ORA_RNA_nu$geneID[i],"/")[[1]])
+GO_ORA_RNA_nu$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(GO_ORA_RNA_nu$geneID[i],"/")[[1]]],collapse = ", ")
+}
+datatable_jm(GO_ORA_RNA_nu %>% filter(num_gens>0))
+
+
+
+
+KEGG_ORA_RNA_nu<-get(load("kegg_sig_nouniverse"))
+
+for(i in 1:dim(KEGG_ORA_RNA_nu)[1]){
+KEGG_ORA_RNA_nu$num_gens[i]<-sum(target_symbol%in%strsplit(KEGG_ORA_RNA_nu$geneID[i],"/")[[1]])
+KEGG_ORA_RNA_nu$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(KEGG_ORA_RNA_nu$geneID[i],"/")[[1]]],collapse = ", ")
+}
+
+datatable_jm(KEGG_ORA_RNA_nu %>% filter(num_gens>0))
+
+
+GO_GSEA_RNA<-get(load("./GO_GSEA"))
+
+for(i in 1:dim(GO_GSEA_RNA)[1]){
+GO_GSEA_RNA$num_gens[i]<-sum(target_symbol%in%strsplit(GO_GSEA_RNA$core_enrichment[i],"/")[[1]])
+GO_GSEA_RNA$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(GO_GSEA_RNA$core_enrichment[i],"/")[[1]]],collapse = ", ")
+}
+
+
+datatable_jm(GO_GSEA_RNA%>% filter(num_gens>0))
+
+KEEG_GSEA_RNA<-get(load("./kegg_gsea_sig"))
+
+
+
+for(i in 1:dim(KEEG_GSEA_RNA)[1]){
+KEEG_GSEA_RNA$num_gens[i]<-sum(target_symbol%in%strsplit(KEEG_GSEA_RNA$core_enrichment[i],"/")[[1]])
+KEEG_GSEA_RNA$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(KEEG_GSEA_RNA$core_enrichment[i],"/")[[1]]],collapse = ", ")
+}
+
+datatable_jm(KEEG_GSEA_RNA%>% filter(num_gens>0))
+
+```
+
+
+##  Functional enrichment
+
+```{r}
+
+GO_ORA_mirna<-enrichGO(
+  target_symbol,
+
+  OrgDb=org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  # universe=rownames(tab),
+  qvalueCutoff = 0.2,
+   # minGSSize = 1,
+   # maxGSSize = 5000,
+  readable = FALSE)
+
+
+GO_ORA_mirna<-GO_ORA_mirna@result %>% filter(p.adjust<=0.05)
+
+datatable_jm(GO_ORA_mirna,column = "geneID")
+# ORA
+# miRNA comuns
+
+# 2D Venn diagram
+library(ggVennDiagram)
+x <- list(GO_miRNA = GO_ORA_mirna$ID, GO_RNA_ORA = GO_ORA_RNA_nu$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+library(GOSim)
+datatable_jm(GO_ORA_mirna[GO_ORA_mirna$ID%in% GO_ORA_RNA_nu$ID,],"geneID")
+
+test<-getTermSim(c(GO_ORA_mirna$ID,GO_ORA_RNA_nu$ID))
+test<-test[,GO_ORA_mirna$ID]
+test<-test[!rownames(test)%in%GO_ORA_mirna$ID,]
+test<-data.frame(test)
+corr<-c()
+
+for(i in 1:dim(test)[1]){
+corr[i]<-paste0(colnames(test[i,])[test[i,]>0.7],collapse = ", ")
+
+}
+corr<-data.frame(corr)
+rownames(corr)<-rownames(test)
+corr<-corr %>% filter(corr!="")
+GO_ORA_RNA_nu$GO_miRNA_1<-corr$corr[match(GO_ORA_RNA_nu$ID,rownames(corr))]
+GO_ORA_RNA_nu<-
+GO_ORA_RNA_nu %>% filter(!is.na(GO_miRNA_1))
+
+datatable_jm(GO_ORA_RNA_nu,column = "geneID")
+
+
+# GSEA
+# miRNA comuns
+
+# 2D Venn diagram
+library(ggVennDiagram)
+x <- list(GO_miRNA = GO_ORA_mirna$ID, GO_RNA_GSEA = GO_GSEA_RNA$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+datatable_jm(GO_ORA_mirna[GO_ORA_mirna$ID%in%GO_GSEA_RNA$ID,],column ="geneID" )
+library(GOSim)
+
+test<-getTermSim(c(GO_ORA_mirna$ID,GO_GSEA_RNA$ID),verbose = T)
+
+test<-test[,GO_ORA_mirna$ID]
+test<-test[!rownames(test)%in%GO_ORA_mirna$ID,]
+test<-data.frame(test)
+corr<-c()
+
+for(i in 1:dim(test)[1]){
+corr[i]<-paste0(colnames(test[i,])[test[i,]>0.7],collapse = ", ")
+
+}
+corr<-data.frame(corr)
+rownames(corr)<-rownames(test)
+corr<-corr %>% filter(corr!="")
+GO_GSEA_RNA$GO_miRNA_1<-corr$corr[match(GO_GSEA_RNA$ID,rownames(corr))]
+GO_GSEA_RNA<-GO_GSEA_RNA %>% filter(!is.na(GO_miRNA_1))
+
+datatable_jm(GO_GSEA_RNA,column = "core_enrichment")
+
+
+
+```
+
+
+```{r}
+
+kegg<-enrichKEGG(target_entrez,
+                 organism = "hsa",
+                 # universe = rownames(tab),
+                 
+                 pvalueCutoff = 0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff = 0.2,
+                 use_internal_data = FALSE)
+
+kegg<-kegg@result
+kegg_sig<-kegg %>% filter(p.adjust<=0.05)
+datatable_jm(kegg_sig)
+
+
+
+library(ggVennDiagram)
+x <- list(KEGG_miRNA = kegg_sig$ID, KEGG_RNA_GSEA = kegg_gsea_sig$ID,
+          KEGG_RNA_ORA = KEGG_ORA_RNA_nu$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+
+```
+
+# hsa-miR-320c
+
+## Proteins
+
+Gens disregulated in proteins and by miRNA
+
+```{r}
+target_symbol<-
+targets@data%>%
+  filter(mature_mirna_id ==mirna_int[5]) %>% 
+  dplyr::select(target_symbol)
+
+target_symbol<-(unique(target_symbol$target_symbol))
+
+
+target_entrez<-
+targets@data%>%
+  filter(mature_mirna_id ==mirna_int[5]) %>% 
+  dplyr::select(target_entrez)
+
+target_entrez<-(unique(target_entrez$target_entrez))
+RNA_sig<-get(load("RNA_tab_sig"))
+dim(RNA_sig)
+
+
+
+
+
+RNA_sig_mirna<-
+RNA_sig %>% 
+  filter(RNA_sig$symbol%in%target_symbol)
+
+datatable_jm(RNA_sig_mirna)
+
+
+```
+
+```{r}
+GO_ORA_RNA_nu<-get(load("GO_ORA_nouniverse"))
+
+for(i in 1:dim(GO_ORA_RNA_nu)[1]){
+GO_ORA_RNA_nu$num_gens[i]<-sum(target_symbol%in%strsplit(GO_ORA_RNA_nu$geneID[i],"/")[[1]])
+GO_ORA_RNA_nu$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(GO_ORA_RNA_nu$geneID[i],"/")[[1]]],collapse = ", ")
+}
+datatable_jm(GO_ORA_RNA_nu %>% filter(num_gens>0))
+
+
+
+
+KEGG_ORA_RNA_nu<-get(load("kegg_sig_nouniverse"))
+
+for(i in 1:dim(KEGG_ORA_RNA_nu)[1]){
+KEGG_ORA_RNA_nu$num_gens[i]<-sum(target_symbol%in%strsplit(KEGG_ORA_RNA_nu$geneID[i],"/")[[1]])
+KEGG_ORA_RNA_nu$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(KEGG_ORA_RNA_nu$geneID[i],"/")[[1]]],collapse = ", ")
+}
+
+datatable_jm(KEGG_ORA_RNA_nu %>% filter(num_gens>0))
+
+
+GO_GSEA_RNA<-get(load("./GO_GSEA"))
+
+for(i in 1:dim(GO_GSEA_RNA)[1]){
+GO_GSEA_RNA$num_gens[i]<-sum(target_symbol%in%strsplit(GO_GSEA_RNA$core_enrichment[i],"/")[[1]])
+GO_GSEA_RNA$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(GO_GSEA_RNA$core_enrichment[i],"/")[[1]]],collapse = ", ")
+}
+
+
+datatable_jm(GO_GSEA_RNA%>% filter(num_gens>0))
+
+KEEG_GSEA_RNA<-get(load("./kegg_gsea_sig"))
+
+
+
+for(i in 1:dim(KEEG_GSEA_RNA)[1]){
+KEEG_GSEA_RNA$num_gens[i]<-sum(target_symbol%in%strsplit(KEEG_GSEA_RNA$core_enrichment[i],"/")[[1]])
+KEEG_GSEA_RNA$gens[i]<-paste(target_symbol[target_symbol%in%strsplit(KEEG_GSEA_RNA$core_enrichment[i],"/")[[1]]],collapse = ", ")
+}
+
+datatable_jm(KEEG_GSEA_RNA%>% filter(num_gens>0))
+
+```
+
+
+##  Functional enrichment
+
+```{r}
+
+GO_ORA_mirna<-enrichGO(
+  target_symbol,
+
+  OrgDb=org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  # universe=rownames(tab),
+  qvalueCutoff = 0.2,
+   # minGSSize = 1,
+   # maxGSSize = 5000,
+  readable = FALSE)
+
+
+GO_ORA_mirna<-GO_ORA_mirna@result %>% filter(p.adjust<=0.05)
+
+datatable_jm(GO_ORA_mirna,column = "geneID")
+# ORA
+# miRNA comuns
+
+# 2D Venn diagram
+library(ggVennDiagram)
+x <- list(GO_miRNA = GO_ORA_mirna$ID, GO_RNA_ORA = GO_ORA_RNA_nu$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+library(GOSim)
+datatable_jm(GO_ORA_mirna[GO_ORA_mirna$ID%in% GO_ORA_RNA_nu$ID,],"geneID")
+
+test<-getTermSim(c(GO_ORA_mirna$ID,GO_ORA_RNA_nu$ID))
+test<-test[,GO_ORA_mirna$ID]
+test<-test[!rownames(test)%in%GO_ORA_mirna$ID,]
+test<-data.frame(test)
+corr<-c()
+
+for(i in 1:dim(test)[1]){
+corr[i]<-paste0(colnames(test[i,])[test[i,]>0.7],collapse = ", ")
+
+}
+corr<-data.frame(corr)
+rownames(corr)<-rownames(test)
+corr<-corr %>% filter(corr!="")
+GO_ORA_RNA_nu$GO_miRNA_1<-corr$corr[match(GO_ORA_RNA_nu$ID,rownames(corr))]
+GO_ORA_RNA_nu<-
+GO_ORA_RNA_nu %>% filter(!is.na(GO_miRNA_1))
+
+datatable_jm(GO_ORA_RNA_nu,column = "geneID")
+
+
+# GSEA
+# miRNA comuns
+
+# 2D Venn diagram
+library(ggVennDiagram)
+x <- list(GO_miRNA = GO_ORA_mirna$ID, GO_RNA_GSEA = GO_GSEA_RNA$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+datatable_jm(GO_ORA_mirna[GO_ORA_mirna$ID%in%GO_GSEA_RNA$ID,],column ="geneID" )
+library(GOSim)
+
+test<-getTermSim(c(GO_ORA_mirna$ID,GO_GSEA_RNA$ID),verbose = T)
+
+test<-test[,GO_ORA_mirna$ID]
+test<-test[!rownames(test)%in%GO_ORA_mirna$ID,]
+test<-data.frame(test)
+corr<-c()
+
+for(i in 1:dim(test)[1]){
+corr[i]<-paste0(colnames(test[i,])[test[i,]>0.7],collapse = ", ")
+
+}
+corr<-data.frame(corr)
+rownames(corr)<-rownames(test)
+corr<-corr %>% filter(corr!="")
+GO_GSEA_RNA$GO_miRNA_1<-corr$corr[match(GO_GSEA_RNA$ID,rownames(corr))]
+GO_GSEA_RNA<-GO_GSEA_RNA %>% filter(!is.na(GO_miRNA_1))
+
+datatable_jm(GO_GSEA_RNA,column = "core_enrichment")
+
+
+
+```
+
+
+```{r}
+
+kegg<-enrichKEGG(target_entrez,
+                 organism = "hsa",
+                 # universe = rownames(tab),
+                 
+                 pvalueCutoff = 0.05,
+                 pAdjustMethod = "BH",
+                 qvalueCutoff = 0.2,
+                 use_internal_data = FALSE)
+
+kegg<-kegg@result
+kegg_sig<-kegg %>% filter(p.adjust<=0.05)
+datatable_jm(kegg_sig)
+
+
+
+library(ggVennDiagram)
+x <- list(KEGG_miRNA = kegg_sig$ID, KEGG_RNA_GSEA = kegg_gsea_sig$ID,
+          KEGG_RNA_ORA = KEGG_ORA_RNA_nu$ID)
+
+ggVennDiagram(x,
+              show_intersect = F,
+              force_upset = F)+
+# scale_fill_gradient2()+
+      scale_color_manual(values = c("black","black"))
+
+
+```
+
